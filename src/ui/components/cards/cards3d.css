@@ -1,0 +1,150 @@
+.tcg-scene {
+  perspective: 1150px;
+}
+
+.tcg-tilt {
+  --rx: 0deg;
+  --ry: 0deg;
+  --mx: 50%;
+  --my: 50%;
+  --glow: 0;
+  transform-style: preserve-3d;
+  transform: rotateX(var(--rx)) rotateY(var(--ry));
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.tcg-tilt.is-interacting {
+  transition: transform 60ms linear;
+}
+
+.tcg-flipper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 650ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.tcg-flipper.is-flipped {
+  transform: rotateY(180deg);
+}
+
+.tcg-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.tcg-face-back {
+  transform: rotateY(180deg);
+}
+
+/* Camada de brilho especular e holografia dinâmica */
+.tcg-holo-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: calc(0.18 + var(--glow) * 0.68);
+  transition: opacity 220ms ease;
+  z-index: 20;
+}
+
+.tcg-holo-comum {
+  background: radial-gradient(
+    circle at var(--mx) var(--my),
+    rgba(255, 255, 255, 0.42) 0%,
+    rgba(255, 255, 255, 0.1) 35%,
+    transparent 70%
+  );
+  mix-blend-mode: soft-light;
+}
+
+.tcg-holo-rara {
+  background:
+    radial-gradient(
+      circle at var(--mx) var(--my),
+      rgba(191, 219, 254, 0.55) 0%,
+      rgba(56, 189, 248, 0.2) 32%,
+      transparent 68%
+    ),
+    linear-gradient(
+      115deg,
+      transparent 20%,
+      rgba(125, 211, 252, 0.28) 42%,
+      rgba(255, 255, 255, 0.45) 50%,
+      rgba(147, 197, 253, 0.28) 58%,
+      transparent 80%
+    );
+  background-size: 100% 100%, 220% 220%;
+  background-position: 0 0, var(--mx) var(--my);
+  mix-blend-mode: color-dodge;
+}
+
+.tcg-holo-epica {
+  background:
+    radial-gradient(
+      circle at var(--mx) var(--my),
+      rgba(255, 255, 255, 0.55) 0%,
+      rgba(196, 181, 253, 0.25) 36%,
+      transparent 70%
+    ),
+    repeating-linear-gradient(
+      125deg,
+      rgba(168, 85, 247, 0.22) 0%,
+      rgba(56, 189, 248, 0.22) 14%,
+      rgba(52, 211, 153, 0.22) 28%,
+      rgba(250, 204, 21, 0.22) 42%,
+      rgba(244, 114, 182, 0.22) 56%,
+      rgba(168, 85, 247, 0.22) 70%
+    );
+  background-size: 100% 100%, 260% 260%;
+  background-position: 0 0, var(--mx) var(--my);
+  mix-blend-mode: color-dodge;
+}
+
+.tcg-holo-lendaria {
+  background:
+    radial-gradient(
+      circle at var(--mx) var(--my),
+      rgba(254, 249, 195, 0.72) 0%,
+      rgba(251, 191, 36, 0.34) 28%,
+      transparent 66%
+    ),
+    repeating-linear-gradient(
+      118deg,
+      rgba(251, 191, 36, 0.28) 0%,
+      rgba(244, 114, 182, 0.24) 16%,
+      rgba(56, 189, 248, 0.24) 32%,
+      rgba(167, 243, 208, 0.24) 48%,
+      rgba(253, 224, 71, 0.3) 64%,
+      rgba(251, 191, 36, 0.28) 80%
+    );
+  background-size: 100% 100%, 300% 300%;
+  background-position: 0 0, var(--mx) var(--my);
+  mix-blend-mode: color-dodge;
+}
+
+.tcg-back-pattern {
+  background-color: #161822;
+  background-image:
+    radial-gradient(circle at 50% 35%, rgba(245, 158, 11, 0.16) 0%, transparent 58%),
+    repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.025) 0px,
+      rgba(255, 255, 255, 0.025) 1px,
+      transparent 1px,
+      transparent 12px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.025) 0px,
+      rgba(255, 255, 255, 0.025) 1px,
+      transparent 1px,
+      transparent 12px
+    );
+}
