@@ -12,6 +12,10 @@ import { evaluateAllCards } from '../domain/cards/registry';
 import type { EvaluatedCard } from '../domain/cards/types';
 import { computePlan } from '../domain/distribution';
 import {
+  instantiateParsedDiscipline,
+  type ParsedDisciplineDraft,
+} from '../domain/editalParser';
+import {
   createCustomDiscipline,
   defaultChecklist,
   instantiateTrailTemplate,
@@ -122,6 +126,10 @@ interface AppContextValue {
   ) => Promise<Discipline>;
   addDisciplinesFromTemplates: (
     templates: TrailTemplate[],
+    options?: { inCycle?: boolean },
+  ) => Promise<Discipline[]>;
+  addDisciplinesFromEdital: (
+    drafts: ParsedDisciplineDraft[],
     options?: { inCycle?: boolean },
   ) => Promise<Discipline[]>;
   addCustomDiscipline: (input: {
@@ -638,6 +646,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       syncFromRepo();
       notify(`${createdList.length} trilhas adicionadas com sucesso!`, 'success');
+      return createdList;
+    },
+    [activeExam?.id, disciplines.length, notify, syncFromRepo],
+  );
+
+  const addDisciplinesFromEdital = useCallback(
+    async (
+      drafts: ParsedDisciplineDraft[],
+      options?: { inCycle?: boolean },
+    ) => {
+      const repo = repoRef.current!;
+      const selected = drafts.filter((d) => d.selected && d.name.trim().length > 0);
+      const currentCount = disciplines.length;
+      const createdList: Discipline[] = [];
+
+      for (let i = 0; i < selected.length; i++) {
+        const disc = instantiateParsedDiscipline(selected[i], {
+          examId: activeExam?.id ?? DEFAULT_EXAM_ID,
+          sortOrder: currentCount + i,
+          inCycle: options?.inCycle ?? false,
+        });
+        await repo.saveDiscipline(disc, `Trilha "${disc.name}" gerada via edital.`);
+        createdList.push(disc);
+      }
+
+      if (createdList[0]) {
+        await repo.setActiveDisciplineId(createdList[0].id);
+      }
+      syncFromRepo();
+      if (createdList.length > 0) {
+        notify(
+          `${createdList.length} trilha${createdList.length === 1 ? '' : 's'} gerada${createdList.length === 1 ? '' : 's'} a partir do edital!`,
+          'success',
+        );
+      }
       return createdList;
     },
     [activeExam?.id, disciplines.length, notify, syncFromRepo],
@@ -1375,6 +1418,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     selectActiveDiscipline,
     addDisciplineFromTemplate,
     addDisciplinesFromTemplates,
+    addDisciplinesFromEdital,
     addCustomDiscipline,
     updateDiscipline,
     deleteDiscipline,

@@ -9,6 +9,7 @@ import {
   Play,
   Plus,
   RotateCcw,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { useApp, useSessionTimer } from '../../application/AppContext';
@@ -27,6 +28,7 @@ import type {
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ContentDetailDrawer } from '../components/ContentDetailDrawer';
 import { DimensionMeters } from '../components/DimensionMeters';
+import { EditalImportModal } from '../components/EditalImportModal';
 import { PageHeader } from '../components/ui/PageHeader';
 import { TimerReadout } from '../components/ui/TimerReadout';
 
@@ -68,6 +70,7 @@ export const TrailsView: React.FC = () => {
 
   const [statusFilter, setStatusFilter] = useState<ContentStatus | 'todos'>('todos');
   const [showCatalogModal, setShowCatalogModal] = useState(false);
+  const [showEditalModal, setShowEditalModal] = useState(false);
   const [confirmDeleteDiscId, setConfirmDeleteDiscId] = useState<string | null>(null);
   const [confirmDiscardSession, setConfirmDiscardSession] = useState(false);
   const [showMoveModal, setShowMoveModal] = useState(false);
@@ -173,17 +176,27 @@ export const TrailsView: React.FC = () => {
         title="Mapa Estruturado de Conteúdos"
         subtitle="O que aprender, em qual sequência pedagógica e sua evolução em cada disciplina."
         actions={
-          <button
-            type="button"
-            onClick={() => {
-              setIncludeInCycle(disciplines.some((d) => d.inCycle));
-              setShowCatalogModal(true);
-            }}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#111827] text-white text-[13px] font-medium hover:bg-[#1F2937] shadow-sm transition cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            Nova disciplina / trilha
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => setShowEditalModal(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#F3EEFF] text-[#5B21B6] border border-[#DDD6FE] text-[13px] font-semibold hover:bg-[#EDE9FE] shadow-xs transition cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4" />
+              Importar Edital
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIncludeInCycle(disciplines.some((d) => d.inCycle));
+                setShowCatalogModal(true);
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#111827] text-white text-[13px] font-medium hover:bg-[#1F2937] shadow-sm transition cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              Nova disciplina / trilha
+            </button>
+          </div>
         }
       />
 
@@ -816,6 +829,12 @@ export const TrailsView: React.FC = () => {
           }
           setConfirmDeleteDiscId(null);
         }}
+      />
+
+      <EditalImportModal
+        open={showEditalModal}
+        onClose={() => setShowEditalModal(false)}
+        defaultIncludeInCycle={disciplines.some((d) => d.inCycle)}
       />
 
       <ConfirmDialog
