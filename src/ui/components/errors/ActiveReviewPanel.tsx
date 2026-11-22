@@ -118,7 +118,15 @@ export const ActiveReviewPanel: React.FC<ActiveReviewPanelProps> = ({
       try {
         await onSubmitReview(currentItem, nextPriority);
         setSessionReviewed((prev) => prev + 1);
-        setDeferredOrder((prev) => prev.filter((id) => id !== currentItem.id));
+        if (nextPriority === 'superado') {
+          setDeferredOrder((prev) => prev.filter((id) => id !== currentItem.id));
+        } else if (orderedQueue.length > 1) {
+          // Move o item revisado para o final da fila nesta sessão para evitar loop infinito
+          setDeferredOrder((prev) => [
+            ...prev.filter((id) => id !== currentItem.id),
+            currentItem.id,
+          ]);
+        }
 
         const remainingAfter =
           nextPriority === 'superado'

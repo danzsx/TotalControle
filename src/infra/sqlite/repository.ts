@@ -63,6 +63,7 @@ export class UnifiedRepository {
   private db: SqliteDatabase;
   private backend: StorageBackend;
   private persistChain: Promise<void> = Promise.resolve();
+  public recoveryNotice: string | null = null;
 
   private constructor(db: SqliteDatabase, backend: StorageBackend) {
     this.db = db;
@@ -72,13 +73,33 @@ export class UnifiedRepository {
   static async open(backend: StorageBackend): Promise<UnifiedRepository> {
     const existingBytes = await backend.loadBytes();
     let db: SqliteDatabase;
+    let recoveryNotice: string | null = null;
     try {
       db = await SqliteDatabase.open(existingBytes);
     } catch {
-      // Se o arquivo estiver corrompido, inicia banco limpo
-      db = await SqliteDatabase.open(null);
+      // Arquivo corrompido: coloca em quarentena antes de qualquer escrita e tenta backup
+      const quarantined = backend.quarantineCorrupt
+        ? await backend.quarantineCorrupt(existingBytes)
+        : { quarantinedPath: null, backupBytes: null };
+
+      if (quarantined.backupBytes) {
+        try {
+          db = await SqliteDatabase.open(quarantined.backupBytes);
+          recoveryNotice =
+            'O banco principal apresentou falha de leitura e foi restaurado a partir do backup automático. O arquivo original foi preservado em quarentena.';
+        } catch {
+          db = await SqliteDatabase.open(null);
+          recoveryNotice =
+            'O banco local estava corrompido e foi movido para quarentena. Um novo espaço foi inicializado — você pode restaurar um backup JSON em Configurações.';
+        }
+      } else {
+        db = await SqliteDatabase.open(null);
+        recoveryNotice =
+          'O banco local estava corrompido e foi movido para quarentena. Um novo espaço foi inicializado — você pode restaurar um backup JSON em Configurações.';
+      }
     }
     const repo = new UnifiedRepository(db, backend);
+    repo.recoveryNotice = recoveryNotice;
     repo.ensureInitialized();
     await repo.persist();
     return repo;
@@ -271,6 +292,11 @@ export class UnifiedRepository {
     operation: 'upsert' | 'delete',
     payload: unknown,
   ): void {
+    // Compacta outbox pendente: mantém apenas o estado mais recente por (tabela, registro)
+    this.db.run(
+      'DELETE FROM sync_outbox WHERE table_name = ? AND record_id = ? AND synced_at IS NULL',
+      [tableName, recordId],
+    );
     this.db.run(
       'INSERT INTO sync_outbox (id, table_name, record_id, operation, payload_json, created_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, NULL)',
       [
@@ -475,10 +501,11 @@ export class UnifiedRepository {
 
   async persist(): Promise<void> {
     const bytes = this.db.exportBytes();
-    this.persistChain = this.persistChain.then(() =>
-      this.backend.saveBytes(bytes),
-    );
-    await this.persistChain;
+    const op = this.persistChain
+      .catch(() => undefined)
+      .then(() => this.backend.saveBytes(bytes));
+    this.persistChain = op.catch(() => undefined);
+    await op;
   }
 
   loadAll(nowMs: number = Date.now()): LoadedState {
@@ -730,29 +757,43 @@ export class UnifiedRepository {
       }
     }
 
+    const activeDiscIdSet = new Set(disciplines.map((d) => d.id));
+    const activeContentIdSet = new Set<string>();
+    for (const d of disciplines) {
+      for (const l of d.levels) {
+        for (const m of l.modules) {
+          for (const c of m.contents) {
+            activeContentIdSet.add(c.id);
+          }
+        }
+      }
+    }
+
     const sessRows = this.db.all<Record<string, unknown>>(
       'SELECT * FROM study_sessions ORDER BY ended_at DESC',
     );
-    const sessions: SessionRecord[] = sessRows.map((r) => ({
-      id: String(r.id),
-      origin: r.origin === 'trilha' ? 'trilha' : 'ciclo',
-      disciplineId: String(r.discipline_id),
-      disciplineName: String(r.discipline_name),
-      disciplineTheme: r.discipline_theme as SessionRecord['disciplineTheme'],
-      contentId: r.content_id ? String(r.content_id) : null,
-      contentTitle: r.content_title ? String(r.content_title) : null,
-      cycleNumber: Number(r.cycle_number),
-      blockIndex: Number(r.block_index),
-      startedAt: String(r.started_at),
-      endedAt: String(r.ended_at),
-      plannedMinutes: Number(r.planned_minutes),
-      studiedMinutes: Number(r.studied_minutes),
-      status: r.status as SessionStatus,
-      notes: String(r.notes ?? ''),
-      createdAt: String(r.created_at),
-      updatedAt: String(r.updated_at),
-      syncStatus: (r.sync_status as 'pending' | 'synced') || 'pending',
-    }));
+    const sessions: SessionRecord[] = sessRows
+      .filter((r) => activeDiscIdSet.has(String(r.discipline_id)))
+      .map((r) => ({
+        id: String(r.id),
+        origin: r.origin === 'trilha' ? 'trilha' : 'ciclo',
+        disciplineId: String(r.discipline_id),
+        disciplineName: String(r.discipline_name),
+        disciplineTheme: r.discipline_theme as SessionRecord['disciplineTheme'],
+        contentId: r.content_id ? String(r.content_id) : null,
+        contentTitle: r.content_title ? String(r.content_title) : null,
+        cycleNumber: Number(r.cycle_number),
+        blockIndex: Number(r.block_index),
+        startedAt: String(r.started_at),
+        endedAt: String(r.ended_at),
+        plannedMinutes: Number(r.planned_minutes),
+        studiedMinutes: Number(r.studied_minutes),
+        status: r.status as SessionStatus,
+        notes: String(r.notes ?? ''),
+        createdAt: String(r.created_at),
+        updatedAt: String(r.updated_at),
+        syncStatus: (r.sync_status as 'pending' | 'synced') || 'pending',
+      }));
 
     const revRows = this.db.all<Record<string, unknown>>(
       'SELECT * FROM error_reviews ORDER BY timestamp DESC',
@@ -776,29 +817,35 @@ export class UnifiedRepository {
     const errRows = this.db.all<Record<string, unknown>>(
       'SELECT * FROM error_records WHERE deleted_at IS NULL ORDER BY updated_at DESC',
     );
-    const errors: ErrorRecord[] = errRows.map((r) => {
-      const id = String(r.id);
-      return {
-        id,
-        disciplineId: String(r.discipline_id),
-        contentId: String(r.content_id),
-        description: String(r.description),
-        correction: String(r.correction),
-        prevention: String(r.prevention ?? ''),
-        priority: r.priority as PriorityLevel,
-        origin: r.origin as ErrorOrigin,
-        referenceQuestion: r.reference_question_json
-          ? JSON.parse(String(r.reference_question_json))
-          : undefined,
-        registrationDate: String(r.registration_date),
-        overcomeAt: r.overcome_at ? String(r.overcome_at) : null,
-        reviewHistory: reviewsByError.get(id) ?? [],
-        createdAt: String(r.created_at),
-        updatedAt: String(r.updated_at),
-        deletedAt: null,
-        syncStatus: (r.sync_status as 'pending' | 'synced') || 'pending',
-      };
-    });
+    const errors: ErrorRecord[] = errRows
+      .filter(
+        (r) =>
+          activeDiscIdSet.has(String(r.discipline_id)) &&
+          activeContentIdSet.has(String(r.content_id)),
+      )
+      .map((r) => {
+        const id = String(r.id);
+        return {
+          id,
+          disciplineId: String(r.discipline_id),
+          contentId: String(r.content_id),
+          description: String(r.description),
+          correction: String(r.correction),
+          prevention: String(r.prevention ?? ''),
+          priority: r.priority as PriorityLevel,
+          origin: r.origin as ErrorOrigin,
+          referenceQuestion: r.reference_question_json
+            ? JSON.parse(String(r.reference_question_json))
+            : undefined,
+          registrationDate: String(r.registration_date),
+          overcomeAt: r.overcome_at ? String(r.overcome_at) : null,
+          reviewHistory: reviewsByError.get(id) ?? [],
+          createdAt: String(r.created_at),
+          updatedAt: String(r.updated_at),
+          deletedAt: null,
+          syncStatus: (r.sync_status as 'pending' | 'synced') || 'pending',
+        };
+      });
 
     const logRows = this.db.all<Record<string, unknown>>(
       'SELECT * FROM operation_logs ORDER BY timestamp DESC LIMIT 400',
@@ -895,6 +942,14 @@ export class UnifiedRepository {
         [now, now, 'pending', examId],
       );
       this.db.run(
+        'UPDATE contents SET deleted_at = ?, updated_at = ?, sync_status = ? WHERE discipline_id IN (SELECT id FROM disciplines WHERE exam_id = ?) AND deleted_at IS NULL',
+        [now, now, 'pending', examId],
+      );
+      this.db.run(
+        'UPDATE error_records SET deleted_at = ?, updated_at = ?, sync_status = ? WHERE discipline_id IN (SELECT id FROM disciplines WHERE exam_id = ?) AND deleted_at IS NULL',
+        [now, now, 'pending', examId],
+      );
+      this.db.run(
         'UPDATE disciplines SET deleted_at = ?, updated_at = ?, sync_status = ? WHERE exam_id = ? AND deleted_at IS NULL',
         [now, now, 'pending', examId],
       );
@@ -966,6 +1021,14 @@ export class UnifiedRepository {
   async deleteDiscipline(disciplineId: string, name: string): Promise<void> {
     const now = new Date().toISOString();
     this.db.transaction(() => {
+      this.db.run(
+        'UPDATE contents SET deleted_at = ?, updated_at = ?, sync_status = ? WHERE discipline_id = ? AND deleted_at IS NULL',
+        [now, now, 'pending', disciplineId],
+      );
+      this.db.run(
+        'UPDATE error_records SET deleted_at = ?, updated_at = ?, sync_status = ? WHERE discipline_id = ? AND deleted_at IS NULL',
+        [now, now, 'pending', disciplineId],
+      );
       this.db.run(
         'UPDATE disciplines SET deleted_at = ?, updated_at = ?, sync_status = ? WHERE id = ?',
         [now, now, 'pending', disciplineId],
@@ -1460,7 +1523,35 @@ export class UnifiedRepository {
       sessions: state.sessions,
       errors: state.errors,
       operationLogs: state.operationLogs,
+      unlockedCards: this.getUnlockedCardsMap(),
     };
+  }
+
+  async restoreFromSqliteBytes(bytes: Uint8Array): Promise<Result<void>> {
+    try {
+      const candidate = await SqliteDatabase.open(bytes);
+      // Valida que possui tabela básica do TotalControle
+      const check = candidate.get<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='disciplines'",
+      );
+      if (!check) {
+        candidate.close();
+        return {
+          ok: false,
+          error: 'O arquivo SQLite selecionado não é um banco válido do TotalControle.',
+        };
+      }
+      this.db.close();
+      this.db = candidate;
+      this.ensureInitialized();
+      await this.persist();
+      return { ok: true, value: undefined };
+    } catch {
+      return {
+        ok: false,
+        error: 'Não foi possível ler o arquivo SQLite selecionado. Verifique se o arquivo está íntegro.',
+      };
+    }
   }
 
   async restoreFromBackup(
@@ -1484,6 +1575,7 @@ export class UnifiedRepository {
       const examIdRemap = new Map<string, string>();
 
       if (mode === 'replace') {
+        this.db.run('DELETE FROM sync_outbox');
         this.db.run('DELETE FROM error_reviews');
         this.db.run('DELETE FROM error_records');
         this.db.run('DELETE FROM study_sessions');
@@ -1499,6 +1591,11 @@ export class UnifiedRepository {
           'INSERT OR REPLACE INTO active_session (id, session_json) VALUES (1, NULL)',
         );
         this.setMeta('user_name', parsed.userName || 'Estudante');
+        if (parsed.unlockedCards && typeof parsed.unlockedCards === 'object') {
+          this.setMeta('unlocked_cards_json', JSON.stringify(parsed.unlockedCards));
+        } else {
+          this.setMeta('unlocked_cards_json', '{}');
+        }
 
         const importedExams =
           Array.isArray(parsed.exams) && parsed.exams.length > 0
@@ -1599,10 +1696,23 @@ export class UnifiedRepository {
         }
       }
 
+      const validExamIds = new Set(
+        this.db
+          .all<{ id: string }>('SELECT id FROM exams WHERE deleted_at IS NULL')
+          .map((r) => r.id),
+      );
       const fallbackExamId =
         this.getMeta('active_exam_id') ||
-        this.db.get<{ id: string }>('SELECT id FROM exams WHERE deleted_at IS NULL LIMIT 1')?.id ||
+        Array.from(validExamIds)[0] ||
         DEFAULT_EXAM_ID;
+
+      if (mode === 'merge' && parsed.unlockedCards && typeof parsed.unlockedCards === 'object') {
+        const currentUnlocked = this.getUnlockedCardsMap();
+        this.setMeta(
+          'unlocked_cards_json',
+          JSON.stringify({ ...parsed.unlockedCards, ...currentUnlocked }),
+        );
+      }
 
       const existingDiscs = this.db.all<{ id: string; exam_id: string; name: string }>(
         'SELECT id, exam_id, name FROM disciplines WHERE deleted_at IS NULL',
@@ -1611,9 +1721,12 @@ export class UnifiedRepository {
       const contentIdRemap = new Map<string, string>();
 
       for (const rawDisc of parsed.disciplines) {
-        const mappedExamId =
+        const candidateExamId =
           examIdRemap.get(rawDisc.examId || DEFAULT_EXAM_ID) ??
           (rawDisc.examId || fallbackExamId);
+        const mappedExamId = validExamIds.has(candidateExamId)
+          ? candidateExamId
+          : fallbackExamId;
         const d: Discipline = { ...rawDisc, examId: mappedExamId };
         if (mode === 'merge') {
           const matched = existingDiscs.find(
@@ -1623,39 +1736,69 @@ export class UnifiedRepository {
           );
           if (matched) {
             discIdRemap.set(d.id, matched.id);
-            // Mescla conteúdos/tópicos da disciplina importada na disciplina existente
+            // Mescla níveis, módulos e conteúdos preservando a hierarquia original
             const existingContents = this.db.all<{ id: string; title: string }>(
               'SELECT id, title FROM contents WHERE discipline_id = ? AND deleted_at IS NULL',
               [matched.id],
             );
-            let targetLevel = this.db.get<{ id: string }>(
-              'SELECT id FROM trail_levels WHERE discipline_id = ? ORDER BY sort_order ASC LIMIT 1',
+            const existingLevels = this.db.all<{ id: string; title: string }>(
+              'SELECT id, title FROM trail_levels WHERE discipline_id = ? ORDER BY sort_order ASC',
               [matched.id],
             );
-            if (!targetLevel) {
-              const lvlId = uid('lvl');
-              this.db.run(
-                'INSERT INTO trail_levels (id, discipline_id, title, subtitle, landscape_name, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
-                [lvlId, matched.id, 'Nível 1 — Fundamentos', 'Conteúdos da disciplina', 'Ponto de Partida', 0],
-              );
-              targetLevel = { id: lvlId };
-            }
-            let targetModule = this.db.get<{ id: string }>(
-              'SELECT id FROM trail_modules WHERE discipline_id = ? ORDER BY sort_order ASC LIMIT 1',
+            const existingModules = this.db.all<{ id: string; level_id: string; title: string }>(
+              'SELECT id, level_id, title FROM trail_modules WHERE discipline_id = ? ORDER BY sort_order ASC',
               [matched.id],
             );
-            if (!targetModule) {
-              const modId = uid('mod');
-              this.db.run(
-                'INSERT INTO trail_modules (id, level_id, discipline_id, title, subtitle, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
-                [modId, targetLevel.id, matched.id, 'Módulo Geral', null, 0],
-              );
-              targetModule = { id: modId };
-            }
 
             let nextSort = existingContents.length;
             for (const lvl of d.levels ?? []) {
+              let targetLevel = existingLevels.find(
+                (el) => el.id === lvl.id || normalizeText(el.title) === normalizeText(lvl.title),
+              );
+              if (!targetLevel) {
+                const lvlId = uid('lvl');
+                this.db.run(
+                  'INSERT INTO trail_levels (id, discipline_id, title, subtitle, landscape_name, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
+                  [
+                    lvlId,
+                    matched.id,
+                    lvl.title || 'Nível 1 — Fundamentos',
+                    lvl.subtitle || '',
+                    lvl.landscapeName || '',
+                    existingLevels.length,
+                  ],
+                );
+                targetLevel = { id: lvlId, title: lvl.title || 'Nível 1 — Fundamentos' };
+                existingLevels.push(targetLevel);
+              }
+
               for (const mod of lvl.modules ?? []) {
+                let targetModule = existingModules.find(
+                  (em) =>
+                    em.level_id === targetLevel!.id &&
+                    (em.id === mod.id || normalizeText(em.title) === normalizeText(mod.title)),
+                );
+                if (!targetModule) {
+                  const modId = uid('mod');
+                  this.db.run(
+                    'INSERT INTO trail_modules (id, level_id, discipline_id, title, subtitle, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
+                    [
+                      modId,
+                      targetLevel.id,
+                      matched.id,
+                      mod.title || 'Módulo Geral',
+                      mod.subtitle ?? null,
+                      existingModules.filter((em) => em.level_id === targetLevel!.id).length,
+                    ],
+                  );
+                  targetModule = {
+                    id: modId,
+                    level_id: targetLevel.id,
+                    title: mod.title || 'Módulo Geral',
+                  };
+                  existingModules.push(targetModule);
+                }
+
                 for (const cnt of mod.contents ?? []) {
                   const matchedContent = existingContents.find(
                     (ec) =>
@@ -1684,6 +1827,17 @@ export class UnifiedRepository {
         importedDisciplines++;
       }
 
+      const validDiscIds = new Set(
+        this.db
+          .all<{ id: string }>('SELECT id FROM disciplines WHERE deleted_at IS NULL')
+          .map((r) => r.id),
+      );
+      const validContentIds = new Set(
+        this.db
+          .all<{ id: string }>('SELECT id FROM contents WHERE deleted_at IS NULL')
+          .map((r) => r.id),
+      );
+
       const existingSessIds = new Set(
         this.db
           .all<{ id: string }>('SELECT id FROM study_sessions')
@@ -1692,9 +1846,14 @@ export class UnifiedRepository {
       for (const s of parsed.sessions ?? []) {
         if (mode === 'merge' && existingSessIds.has(s.id)) continue;
         const mappedDiscId = discIdRemap.get(s.disciplineId) ?? s.disciplineId;
-        const mappedContentId = s.contentId
+        if (!validDiscIds.has(mappedDiscId)) continue;
+        const candidateContentId = s.contentId
           ? (contentIdRemap.get(s.contentId) ?? s.contentId)
           : null;
+        const mappedContentId =
+          candidateContentId && validContentIds.has(candidateContentId)
+            ? candidateContentId
+            : null;
         this.db.run(
           `INSERT OR IGNORE INTO study_sessions
             (id, origin, discipline_id, discipline_name, discipline_theme, content_id, content_title, cycle_number, block_index, started_at, ended_at, planned_minutes, studied_minutes, status, notes, created_at, updated_at, sync_status)
@@ -1719,6 +1878,7 @@ export class UnifiedRepository {
             s.updatedAt,
           ],
         );
+        existingSessIds.add(s.id);
         importedSessions++;
       }
 
@@ -1731,6 +1891,9 @@ export class UnifiedRepository {
         if (mode === 'merge' && existingErrIds.has(e.id)) continue;
         const mappedDiscId = discIdRemap.get(e.disciplineId) ?? e.disciplineId;
         const mappedContentId = contentIdRemap.get(e.contentId) ?? e.contentId;
+        if (!validDiscIds.has(mappedDiscId) || !validContentIds.has(mappedContentId)) {
+          continue;
+        }
         this.db.run(
           `INSERT OR IGNORE INTO error_records
             (id, discipline_id, content_id, description, correction, prevention, priority, origin, reference_question_json, registration_date, overcome_at, created_at, updated_at, deleted_at, sync_status)
@@ -1767,6 +1930,7 @@ export class UnifiedRepository {
             ],
           );
         }
+        existingErrIds.add(e.id);
         importedErrors++;
       }
 

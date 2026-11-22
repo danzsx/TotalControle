@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -8,11 +8,12 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useApp } from '../../application/AppContext';
+import { useApp, useSessionTimer } from '../../application/AppContext';
 import { formatMinutes } from '../../domain/explain';
 import { calculateContentMetrics } from '../../domain/mastery';
 import { formatDateTimeBR, uid } from '../../domain/text';
 import type { ContentNode, ContentStatus, Discipline } from '../../domain/types';
+import { ConfirmDialog } from './ConfirmDialog';
 import { DimensionMeters } from './DimensionMeters';
 import { TimerReadout } from './ui/TimerReadout';
 
@@ -38,7 +39,6 @@ export const ContentDetailDrawer: React.FC<ContentDetailDrawerProps> = ({
     sessions,
     errors,
     activeSession,
-    elapsedSessionMs,
     cycleState,
     updateContentNode,
     deleteContentNode,
@@ -49,6 +49,63 @@ export const ContentDetailDrawer: React.FC<ContentDetailDrawerProps> = ({
     resumeActiveSession,
     finishActiveSession,
   } = useApp();
+  const elapsedSessionMs = useSessionTimer();
+
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [notesDraft, setNotesDraft] = useState(content.notes);
+  const [difficultiesDraft, setDifficultiesDraft] = useState(content.difficulties);
+  const [doneDraft, setDoneDraft] = useState(String(content.exercisesDone));
+  const [correctDraft, setCorrectDraft] = useState(String(content.exercisesCorrect));
+
+  const contentRef = useRef(content);
+  contentRef.current = content;
+  const textTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setNotesDraft(content.notes);
+    setDifficultiesDraft(content.difficulties);
+    setDoneDraft(String(content.exercisesDone));
+    setCorrectDraft(String(content.exercisesCorrect));
+  }, [content.id, content.notes, content.difficulties, content.exercisesDone, content.exercisesCorrect]);
+
+  const flushTextChanges = useCallback(
+    (nextNotes: string, nextDiff: string) => {
+      if (textTimerRef.current) {
+        clearTimeout(textTimerRef.current);
+        textTimerRef.current = null;
+      }
+      const latest = contentRef.current;
+      if (nextNotes === latest.notes && nextDiff === latest.difficulties) return;
+      void updateContentNode(discipline.id, {
+        ...latest,
+        notes: nextNotes,
+        difficulties: nextDiff,
+      });
+    },
+    [discipline.id, updateContentNode],
+  );
+
+  const scheduleTextSave = (nextNotes: string, nextDiff: string) => {
+    if (textTimerRef.current) clearTimeout(textTimerRef.current);
+    textTimerRef.current = setTimeout(() => {
+      flushTextChanges(nextNotes, nextDiff);
+    }, 500);
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !confirmDeleteOpen) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      if (textTimerRef.current) clearTimeout(textTimerRef.current);
+      if (exTimerRef.current) clearTimeout(exTimerRef.current);
+    };
+  }, [confirmDeleteOpen, onClose]);
 
   const isStudyingThisContent = activeSession?.contentId === content.id;
   const nextCycleBlock = cycleState.plan?.blocks[cycleState.position] ?? null;
@@ -109,35 +166,50 @@ export const ContentDetailDrawer: React.FC<ContentDetailDrawerProps> = ({
     });
   };
 
-  const handleExerciseChange = async (
-    field: 'exercisesDone' | 'exercisesCorrect',
-    value: number,
-  ) => {
-    const safeVal = Math.max(0, Math.round(value));
-    const nextDone =
-      field === 'exercisesDone'
-        ? safeVal
-        : Math.max(content.exercisesDone, safeVal);
-    const nextCorrect =
-      field === 'exercisesCorrect'
-        ? Math.min(safeVal, nextDone)
-        : Math.min(content.exercisesCorrect, nextDone);
+  const commitExercises = useCallback(
+    (rawDone: string, rawCorrect: string) => {
+      if (exTimerRef.current) {
+        clearTimeout(exTimerRef.current);
+        exTimerRef.current = null;
+      }
+      const latest = contentRef.current;
+      const parsedDone = rawDone.trim() === '' ? 0 : Math.max(0, Math.round(Number(rawDone) || 0));
+      const parsedCorrect =
+        rawCorrect.trim() === '' ? 0 : Math.max(0, Math.round(Number(rawCorrect) || 0));
+      const nextDone = Math.max(parsedDone, parsedCorrect);
+      const nextCorrect = Math.min(parsedCorrect, nextDone);
 
-    const now = new Date().toISOString();
-    await updateContentNode(
-      discipline.id,
-      {
-        ...content,
-        status:
-          content.status === 'nao_iniciado' && nextDone > 0
-            ? 'em_andamento'
-            : content.status,
-        exercisesDone: nextDone,
-        exercisesCorrect: nextCorrect,
-        lastStudiedAt: now,
-      },
-      `Questões atualizadas em "${content.title}" (${nextCorrect}/${nextDone}).`,
-    );
+      setDoneDraft(String(nextDone));
+      setCorrectDraft(String(nextCorrect));
+
+      if (nextDone === latest.exercisesDone && nextCorrect === latest.exercisesCorrect) {
+        return;
+      }
+
+      const now = new Date().toISOString();
+      void updateContentNode(
+        discipline.id,
+        {
+          ...latest,
+          status:
+            latest.status === 'nao_iniciado' && nextDone > 0
+              ? 'em_andamento'
+              : latest.status,
+          exercisesDone: nextDone,
+          exercisesCorrect: nextCorrect,
+          lastStudiedAt: now,
+        },
+        `Questões atualizadas em "${latest.title}" (${nextCorrect}/${nextDone}).`,
+      );
+    },
+    [discipline.id, updateContentNode],
+  );
+
+  const scheduleExerciseCommit = (nextDoneStr: string, nextCorrectStr: string) => {
+    if (exTimerRef.current) clearTimeout(exTimerRef.current);
+    exTimerRef.current = setTimeout(() => {
+      commitExercises(nextDoneStr, nextCorrectStr);
+    }, 600);
   };
 
   const handleCompleteReview = async () => {
@@ -165,7 +237,18 @@ export const ContentDetailDrawer: React.FC<ContentDetailDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-[#111827]/25 backdrop-blur-xs">
+    <div
+      className="fixed inset-0 z-40 flex justify-end bg-[#111827]/25 backdrop-blur-xs"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Detalhes de ${content.title}`}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          flushTextChanges(notesDraft, difficultiesDraft);
+          onClose();
+        }
+      }}
+    >
       <div className="w-full max-w-xl h-full bg-white border-l border-[#EAE9E4] shadow-[0_20px_60px_rgba(17,24,39,0.12)] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="px-6 py-5 border-b border-[#F3F4F6] flex items-start justify-between gap-4">
@@ -402,10 +485,13 @@ export const ContentDetailDrawer: React.FC<ContentDetailDrawerProps> = ({
                 <input
                   type="number"
                   min={0}
-                  value={content.exercisesDone}
-                  onChange={(e) =>
-                    handleExerciseChange('exercisesDone', Number(e.target.value))
-                  }
+                  value={doneDraft}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setDoneDraft(val);
+                    scheduleExerciseCommit(val, correctDraft);
+                  }}
+                  onBlur={() => commitExercises(doneDraft, correctDraft)}
                   className="w-full bg-white border border-[#EAE9E4] rounded-xl px-3 py-1.5 text-sm font-medium text-[#111827] tabular-nums focus:outline-none focus:border-[#9CA3AF]"
                 />
               </div>
@@ -416,11 +502,13 @@ export const ContentDetailDrawer: React.FC<ContentDetailDrawerProps> = ({
                 <input
                   type="number"
                   min={0}
-                  max={content.exercisesDone}
-                  value={content.exercisesCorrect}
-                  onChange={(e) =>
-                    handleExerciseChange('exercisesCorrect', Number(e.target.value))
-                  }
+                  value={correctDraft}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCorrectDraft(val);
+                    scheduleExerciseCommit(doneDraft, val);
+                  }}
+                  onBlur={() => commitExercises(doneDraft, correctDraft)}
                   className="w-full bg-white border border-[#EAE9E4] rounded-xl px-3 py-1.5 text-sm font-medium text-[#111827] tabular-nums focus:outline-none focus:border-[#9CA3AF]"
                 />
               </div>
@@ -435,13 +523,13 @@ export const ContentDetailDrawer: React.FC<ContentDetailDrawerProps> = ({
               </label>
               <textarea
                 rows={3}
-                value={content.notes}
-                onChange={(e) =>
-                  updateContentNode(discipline.id, {
-                    ...content,
-                    notes: e.target.value,
-                  })
-                }
+                value={notesDraft}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setNotesDraft(val);
+                  scheduleTextSave(val, difficultiesDraft);
+                }}
+                onBlur={() => flushTextChanges(notesDraft, difficultiesDraft)}
                 placeholder="Registre os pontos centrais deste conteúdo..."
                 className="w-full rounded-2xl p-3 text-sm input-ambient"
               />
@@ -452,13 +540,13 @@ export const ContentDetailDrawer: React.FC<ContentDetailDrawerProps> = ({
               </label>
               <textarea
                 rows={2}
-                value={content.difficulties}
-                onChange={(e) =>
-                  updateContentNode(discipline.id, {
-                    ...content,
-                    difficulties: e.target.value,
-                  })
-                }
+                value={difficultiesDraft}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setDifficultiesDraft(val);
+                  scheduleTextSave(notesDraft, val);
+                }}
+                onBlur={() => flushTextChanges(notesDraft, difficultiesDraft)}
                 placeholder="O que ainda gera dúvida ou exige atenção?"
                 className="w-full rounded-2xl p-3 text-sm input-ambient"
               />
@@ -497,10 +585,7 @@ export const ContentDetailDrawer: React.FC<ContentDetailDrawerProps> = ({
         <div className="px-6 py-3.5 border-t border-[#F3F4F6] bg-[#FAFAF9] flex items-center justify-between">
           <button
             type="button"
-            onClick={async () => {
-              await deleteContentNode(discipline.id, content);
-              onClose();
-            }}
+            onClick={() => setConfirmDeleteOpen(true)}
             className="flex items-center gap-1.5 text-xs font-medium text-[#DC2626] hover:underline cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -508,13 +593,30 @@ export const ContentDetailDrawer: React.FC<ContentDetailDrawerProps> = ({
           </button>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => {
+              flushTextChanges(notesDraft, difficultiesDraft);
+              onClose();
+            }}
             className="px-4 py-2 rounded-xl bg-[#111827] text-white text-xs font-medium hover:bg-[#1F2937] transition cursor-pointer"
           >
             Concluir edição
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title="Remover conteúdo"
+        message={`Deseja remover "${content.title}" desta trilha? As anotações e o histórico vinculados deixarão de aparecer na visualização ativa.`}
+        confirmLabel="Remover"
+        danger
+        onCancel={() => setConfirmDeleteOpen(false)}
+        onConfirm={async () => {
+          setConfirmDeleteOpen(false);
+          await deleteContentNode(discipline.id, content);
+          onClose();
+        }}
+      />
     </div>
   );
 };

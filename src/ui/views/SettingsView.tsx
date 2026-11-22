@@ -1,10 +1,11 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   CloudOff,
   Database,
   Download,
   FolderOpen,
   RotateCcw,
+  Sparkles,
   Upload,
 } from 'lucide-react';
 import { useApp } from '../../application/AppContext';
@@ -21,25 +22,47 @@ export const SettingsView: React.FC = () => {
     exportJsonBackup,
     exportSqliteBackup,
     restoreBackupJson,
+    restoreBackupSqlite,
     revealDataFolder,
     resetAllData,
+    cardsEnabled,
+    setCardsEnabled,
     notify,
   } = useApp();
 
   const [nameInput, setNameInput] = useState(meta.userName);
   const [restoreMode, setRestoreMode] = useState<'merge' | 'replace'>('merge');
   const [confirmReset, setConfirmReset] = useState(false);
+  const [pendingReplaceJson, setPendingReplaceJson] = useState<string | null>(null);
+  const [pendingSqliteBytes, setPendingSqliteBytes] = useState<Uint8Array | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const sqliteInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setNameInput(meta.userName);
+  }, [meta.userName]);
 
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const text = await file.text();
-    const res = await restoreBackupJson(text, restoreMode);
+    e.target.value = '';
+    if (restoreMode === 'replace') {
+      setPendingReplaceJson(text);
+      return;
+    }
+    const res = await restoreBackupJson(text, 'merge');
     if (!res.ok) {
       notify(res.error, 'error');
     }
+  };
+
+  const handleImportSqlite = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const buf = await file.arrayBuffer();
     e.target.value = '';
+    setPendingSqliteBytes(new Uint8Array(buf));
   };
 
   return (
@@ -77,6 +100,39 @@ export const SettingsView: React.FC = () => {
             Salvar nome
           </button>
         </form>
+      </section>
+
+      {/* Preferências de Interface */}
+      <section className="rounded-[26px] surface-card p-6 space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-start gap-2.5">
+            <Sparkles className="w-5 h-5 text-[#7C3AED] mt-0.5 shrink-0" />
+            <div>
+              <h3 className="font-display text-base font-semibold text-[#111827]">
+                Cartas Colecionáveis
+              </h3>
+              <p className="text-xs text-[#6B7280] mt-0.5">
+                Exibir cartas colecionáveis 3D no painel inicial e o catálogo na barra lateral.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={cardsEnabled}
+            aria-label="Ativar ou desativar cartas colecionáveis"
+            onClick={() => setCardsEnabled(!cardsEnabled)}
+            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+              cardsEnabled ? 'bg-[#111827]' : 'bg-[#D1D5DB]'
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                cardsEnabled ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
       </section>
 
       {/* Banco SQLite Compartilhado */}
@@ -161,6 +217,22 @@ export const SettingsView: React.FC = () => {
             <Upload className="w-4 h-4" />
             Importar Backup (.json)
           </button>
+
+          <input
+            ref={sqliteInputRef}
+            type="file"
+            accept=".sqlite,.db,application/x-sqlite3"
+            onChange={handleImportSqlite}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => sqliteInputRef.current?.click()}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-[#EAE9E4] bg-white text-sm font-medium text-[#111827] hover:bg-[#FAFAF9] shadow-[0_2px_8px_rgba(17,24,39,0.03)] transition cursor-pointer"
+          >
+            <Upload className="w-4 h-4" />
+            Restaurar Banco (.sqlite)
+          </button>
         </div>
       </section>
 
@@ -214,6 +286,38 @@ export const SettingsView: React.FC = () => {
         onConfirm={async () => {
           await resetAllData();
           setConfirmReset(false);
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(pendingReplaceJson)}
+        title="Substituir todos os dados pelo backup?"
+        message="O modo 'Substituir tudo' apaga todos os concursos, trilhas, sessões e erros atuais antes de importar o arquivo selecionado. Deseja continuar?"
+        confirmLabel="Substituir tudo"
+        danger
+        onCancel={() => setPendingReplaceJson(null)}
+        onConfirm={async () => {
+          if (pendingReplaceJson) {
+            const res = await restoreBackupJson(pendingReplaceJson, 'replace');
+            if (!res.ok) notify(res.error, 'error');
+          }
+          setPendingReplaceJson(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(pendingSqliteBytes)}
+        title="Restaurar banco SQLite completo?"
+        message="Esta operação substitui integralmente o banco local atual pelo arquivo .sqlite selecionado. Exporte um backup antes se desejar preservar o estado atual."
+        confirmLabel="Restaurar banco"
+        danger
+        onCancel={() => setPendingSqliteBytes(null)}
+        onConfirm={async () => {
+          if (pendingSqliteBytes) {
+            const res = await restoreBackupSqlite(pendingSqliteBytes);
+            if (!res.ok) notify(res.error, 'error');
+          }
+          setPendingSqliteBytes(null);
         }}
       />
     </div>

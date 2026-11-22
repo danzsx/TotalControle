@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   Layers,
   ListOrdered,
@@ -12,7 +13,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useApp } from '../../application/AppContext';
+import { useApp, useSessionTimer } from '../../application/AppContext';
 import { DISCIPLINE_THEMES } from '../../domain/constants';
 import {
   explainAllocation,
@@ -21,6 +22,7 @@ import {
 } from '../../domain/explain';
 import { flattenContents } from '../../domain/mastery';
 import type { CycleSettings, Difficulty, DisciplineTheme } from '../../domain/types';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PageHeader } from '../components/ui/PageHeader';
 import { TimerReadout } from '../components/ui/TimerReadout';
 
@@ -85,7 +87,6 @@ export const CycleView: React.FC = () => {
     cycleSettings,
     cycleState,
     activeSession,
-    elapsedSessionMs,
     setActiveTab,
     addCustomDiscipline,
     updateDiscipline,
@@ -99,13 +100,30 @@ export const CycleView: React.FC = () => {
     discardActiveSession,
     finishActiveSession,
     skipCurrentBlock,
+    notify,
   } = useApp();
+  const elapsedSessionMs = useSessionTimer();
 
   const [selectedContentId, setSelectedContentId] = useState<string>('');
   const [manualMinutes, setManualMinutes] = useState<string>('');
   const [showSettings, setShowSettings] = useState(false);
   const [showSequenceModal, setShowSequenceModal] = useState(false);
   const [showDisciplinesModal, setShowDisciplinesModal] = useState(false);
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
+  const [confirmRestartOpen, setConfirmRestartOpen] = useState(false);
+
+  useEffect(() => {
+    if (!showSettings && !showSequenceModal && !showDisciplinesModal) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowSettings(false);
+        setShowSequenceModal(false);
+        setShowDisciplinesModal(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showSettings, showSequenceModal, showDisciplinesModal]);
 
   const [draftSettings, setDraftSettings] =
     useState<CycleSettings>(cycleSettings);
@@ -194,7 +212,7 @@ export const CycleView: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={restartCycle}
+              onClick={() => setConfirmRestartOpen(true)}
               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/95 border border-[#EAE9E4] shadow-[0_2px_8px_rgba(17,24,39,0.03)] text-[13px] font-medium text-[#4B5563] hover:bg-[#FAFAF9] hover:text-[#111827] transition cursor-pointer"
             >
               <RotateCcw className="w-4 h-4" />
@@ -203,6 +221,18 @@ export const CycleView: React.FC = () => {
           </>
         }
       />
+
+      {/* Avisos do algoritmo de distribuição (quando aplicável) */}
+      {(cycleState.plan?.warnings?.length ?? 0) > 0 && (
+        <div className="rounded-2xl bg-[#FEF9EC] border border-[#FDE68A] px-4 py-3 flex items-start gap-2.5 text-xs text-[#92400E]">
+          <AlertTriangle className="w-4 h-4 text-[#D97706] shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            {cycleState.plan!.warnings.map((w, idx) => (
+              <p key={idx}>{w}</p>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Palco Principal em Tela Cheia: Estudar Agora / Sessão Ativa */}
       <section className="relative overflow-hidden rounded-[30px] surface-card p-8 md:p-14 flex-1 flex flex-col items-center justify-center">
@@ -376,7 +406,7 @@ export const CycleView: React.FC = () => {
 
                 <button
                   type="button"
-                  onClick={discardActiveSession}
+                  onClick={() => setConfirmDiscardOpen(true)}
                   className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-sm text-[#DC2626] hover:bg-[#FEF2F2] transition-colors cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -388,6 +418,7 @@ export const CycleView: React.FC = () => {
                 <input
                   type="number"
                   min={1}
+                  max={1440}
                   placeholder="Ajustar min"
                   value={manualMinutes}
                   onChange={(e) => setManualMinutes(e.target.value)}
@@ -396,9 +427,18 @@ export const CycleView: React.FC = () => {
                 <button
                   type="button"
                   onClick={async () => {
-                    const parsed = manualMinutes.trim()
-                      ? Number(manualMinutes)
-                      : undefined;
+                    let parsed: number | undefined = undefined;
+                    if (manualMinutes.trim()) {
+                      const num = Number(manualMinutes);
+                      if (!Number.isFinite(num) || num < 1 || num > 1440) {
+                        notify(
+                          'Informe um tempo válido entre 1 e 1440 minutos.',
+                          'warning',
+                        );
+                        return;
+                      }
+                      parsed = Math.round(num);
+                    }
                     await finishActiveSession(parsed);
                     setManualMinutes('');
                   }}
@@ -887,6 +927,30 @@ export const CycleView: React.FC = () => {
           </form>
         </div>
       )}
+      <ConfirmDialog
+        open={confirmDiscardOpen}
+        title="Descartar sessão em andamento?"
+        message="O tempo acumulado nesta sessão será perdido e não será registrado no histórico nem avançará o ciclo."
+        confirmLabel="Descartar sessão"
+        danger
+        onCancel={() => setConfirmDiscardOpen(false)}
+        onConfirm={async () => {
+          setConfirmDiscardOpen(false);
+          await discardActiveSession();
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmRestartOpen}
+        title="Reiniciar ciclo para o bloco 1?"
+        message="A posição atual do ciclo voltará ao primeiro bloco planejado. Seu histórico de sessões já concluídas será mantido."
+        confirmLabel="Reiniciar bloco 1"
+        onCancel={() => setConfirmRestartOpen(false)}
+        onConfirm={async () => {
+          setConfirmRestartOpen(false);
+          await restartCycle();
+        }}
+      />
     </div>
   );
 };

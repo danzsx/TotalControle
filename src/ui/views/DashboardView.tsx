@@ -1,16 +1,13 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ArrowRight,
-  Award,
   CheckCircle2,
   Circle,
   Clock,
   Compass,
-  Lock,
   Play,
   RefreshCw,
   Sparkles,
-  X,
 } from 'lucide-react';
 import { useApp } from '../../application/AppContext';
 import { DISCIPLINE_THEMES } from '../../domain/constants';
@@ -27,21 +24,8 @@ import {
   findLastAccessedContent,
 } from '../../domain/stats';
 import { AnalogClock } from '../components/AnalogClock';
-
-function masteryRank(mastery: number): string {
-  if (mastery >= 90) return 'S';
-  if (mastery >= 75) return 'A';
-  if (mastery >= 55) return 'B';
-  if (mastery >= 35) return 'C';
-  if (mastery >= 15) return 'D';
-  return 'E';
-}
-
-function masteryRarity(mastery: number): string {
-  if (mastery >= 75) return 'Mestre';
-  if (mastery >= 35) return 'Rara';
-  return 'Essencial';
-}
+import { CardInspectorModal } from '../components/cards/CardInspectorModal';
+import { TradingCard3D } from '../components/cards/TradingCard3D';
 
 export const DashboardView: React.FC = () => {
   const {
@@ -53,14 +37,15 @@ export const DashboardView: React.FC = () => {
     errors,
     cycleState,
     activeSession,
+    evaluatedCards,
+    cardsEnabled,
     setActiveTab,
     startBlockSession,
     openContentInTrail,
     selectActiveDiscipline,
   } = useApp();
 
-  const [cardInspect3D, setCardInspect3D] = useState(false);
-  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [inspectCardIndex, setInspectCardIndex] = useState<number | null>(null);
 
   const global = calculateGlobalMetrics(disciplines, sessions, errors);
   const streak = currentStreakDays(sessions);
@@ -75,8 +60,11 @@ export const DashboardView: React.FC = () => {
       : null;
 
   const reviewSuggestions = getReviewSuggestions(disciplines, errors);
-  const highErrors = errors.filter((e) => e.priority === 'alta');
-  const reviewPointsCount = reviewSuggestions.length + highErrors.length;
+  const suggestedContentIds = new Set(reviewSuggestions.map((s) => s.content.id));
+  const extraHighErrors = errors.filter(
+    (e) => e.priority === 'alta' && !suggestedContentIds.has(e.contentId),
+  );
+  const reviewPointsCount = reviewSuggestions.length + extraHighErrors.length;
 
   const hour = new Date().getHours();
   const greeting =
@@ -90,6 +78,9 @@ export const DashboardView: React.FC = () => {
       ),
     ),
   );
+  const unlockedCardsCount = evaluatedCards.filter(
+    (c) => c.evaluation.unlocked,
+  ).length;
   const discoverySteps = [
     {
       label: 'Escolher uma disciplina',
@@ -105,27 +96,32 @@ export const DashboardView: React.FC = () => {
     },
     {
       label: 'Desbloquear primeira carta',
-      done: global.completedCount > 0,
+      done: unlockedCardsCount > 0,
     },
   ];
 
-  // Disciplina em foco para a Carta Colecionável
+  // Disciplina em foco no squircle central
   const focusDiscipline = activeDiscipline ?? disciplines[0] ?? null;
-  const focusIndex = focusDiscipline
-    ? Math.max(0, disciplines.findIndex((d) => d.id === focusDiscipline.id))
-    : 0;
-  const focusMetrics = focusDiscipline
-    ? calculateDisciplineMetrics(focusDiscipline, sessions, errors)
-    : null;
-  const focusTheme = focusDiscipline
-    ? DISCIPLINE_THEMES[focusDiscipline.theme]
-    : DISCIPLINE_THEMES.sky;
-  const isFocusCardUnlocked = (focusMetrics?.completedCount ?? 0) > 0;
 
-  // Contagem de cartas desbloqueadas na galeria
-  const unlockedCardsCount = disciplines.filter(
-    (d) => calculateDisciplineMetrics(d, sessions, errors).completedCount > 0,
-  ).length;
+  // Carta em destaque do catálogo real (última desbloqueada ou próxima conquista mais próxima)
+  const featuredCardIndex = useMemo(() => {
+    if (evaluatedCards.length === 0) return -1;
+    const unlockedWithDates = evaluatedCards
+      .map((item, idx) => ({ item, idx }))
+      .filter((x) => x.item.evaluation.unlocked)
+      .sort((a, b) =>
+        (b.item.unlockedAt ?? '').localeCompare(a.item.unlockedAt ?? ''),
+      );
+    if (unlockedWithDates.length > 0) return unlockedWithDates[0].idx;
+
+    const closestLocked = evaluatedCards
+      .map((item, idx) => ({ item, idx }))
+      .sort((a, b) => b.item.evaluation.progressPct - a.item.evaluation.progressPct);
+    return closestLocked[0]?.idx ?? 0;
+  }, [evaluatedCards]);
+
+  const featuredCard =
+    featuredCardIndex >= 0 ? evaluatedCards[featuredCardIndex] : null;
 
   // Pílulas flutuantes ao redor do squircle central (até 3 disciplinas)
   const floatingDisciplines = disciplines
@@ -235,7 +231,7 @@ export const DashboardView: React.FC = () => {
       {/* Palco central orgânico (estilo Be a Master) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center my-auto py-2">
         {/* Coluna Esquerda: Roteiro de descoberta + Reencontro sereno */}
-        <div className="lg:col-span-3 space-y-3.5">
+        <div className={`${cardsEnabled ? 'lg:col-span-3' : 'lg:col-span-5'} space-y-3.5`}>
           {/* Card Lavanda: Roteiro de descoberta */}
           <section className="discovery-card-gradient rounded-[24px] p-5 border border-[#E9D5FF]/70 shadow-[0_8px_28px_rgba(139,92,246,0.06)]">
             <div className="flex items-center justify-between mb-3.5">
@@ -316,7 +312,7 @@ export const DashboardView: React.FC = () => {
         </div>
 
         {/* Coluna Central: Squircle iridescente + Pílulas de disciplinas */}
-        <div className="lg:col-span-5 flex flex-col items-center justify-center py-4">
+        <div className={`${cardsEnabled ? 'lg:col-span-5' : 'lg:col-span-7'} flex flex-col items-center justify-center py-4`}>
           {/* Pílulas superiores */}
           {floatingDisciplines.length > 0 && (
             <div className="w-full max-w-[440px] flex flex-wrap items-center justify-between gap-3 mb-5 px-2">
@@ -369,158 +365,29 @@ export const DashboardView: React.FC = () => {
           )}
         </div>
 
-        {/* Coluna Direita: Carta Colecionável 3D */}
-        <div className="lg:col-span-4 flex flex-col items-center">
-          <div className="relative w-full max-w-[320px]">
-            {/* Camada traseira decorativa (efeito baralho) */}
-            <div
-              aria-hidden="true"
-              className="absolute inset-0 translate-x-2 translate-y-1.5 rotate-2 rounded-[24px] bg-white/70 border border-[#EAE9E4]"
-            />
+        {/* Coluna Direita: Carta Colecionável 3D Real (unificada com o Catálogo) */}
+        {cardsEnabled && (
+          <div className="lg:col-span-4 flex flex-col items-center">
+            {featuredCard && (
+              <div className="w-full max-w-[270px]">
+                <TradingCard3D
+                  item={featuredCard}
+                  size="catalog"
+                  onOpenInspector={() => setInspectCardIndex(featuredCardIndex)}
+                />
+              </div>
+            )}
 
-            {/* Carta Principal */}
-            <div
-              className={`relative rounded-[24px] bg-white border border-[#EAE9E4] p-5 shadow-[0_14px_34px_rgba(30,36,48,0.06)] transition-all duration-300 ${
-                cardInspect3D
-                  ? 'scale-[1.03] -rotate-1 shadow-[0_22px_48px_rgba(30,36,48,0.12)]'
-                  : 'hover:-translate-y-1'
-              }`}
+            <button
+              type="button"
+              onClick={() => setActiveTab('cards')}
+              className="mt-3.5 inline-flex items-center gap-1.5 text-[12px] font-medium text-[#6B7280] hover:text-[#111827] transition cursor-pointer"
             >
-              {/* Cabeçalho da carta */}
-              <div className="flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6B7280]">
-                <span className="truncate">
-                  {focusDiscipline
-                    ? `${focusDiscipline.name} · Pioneiro`
-                    : 'Jornada · Pioneiro'}
-                </span>
-                <span className="font-mono tabular-nums shrink-0">
-                  Nº {String(focusIndex + 1).padStart(4, '0')}
-                </span>
-              </div>
-
-              {/* Título e Rank DOM */}
-              <div className="flex items-center justify-between gap-2 mt-1.5">
-                <h3 className="font-display text-[18px] font-bold text-[#111827] truncate">
-                  {isFocusCardUnlocked
-                    ? 'Carta Iluminada'
-                    : 'Carta Bloqueada'}
-                </h3>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="font-mono text-[11px] font-semibold text-[#374151] tabular-nums">
-                    DOM {focusMetrics?.mastery ?? 0}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded-md bg-[#F3F4F6] border border-[#E5E7EB] font-mono text-[10px] font-bold text-[#111827]">
-                    {masteryRank(focusMetrics?.mastery ?? 0)} ·{' '}
-                    {focusMetrics?.completedCount ?? 0}
-                  </span>
-                </div>
-              </div>
-
-              {/* Moldura visual central da carta */}
-              {cardInspect3D ? (
-                <div
-                  className={`my-3.5 rounded-2xl p-4 bg-gradient-to-br ${focusTheme.gradient} border ${focusTheme.border} space-y-2.5`}
-                >
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-[#4B5563]">Conclusão da trilha</span>
-                    <span className="font-semibold text-[#111827] tabular-nums">
-                      {focusMetrics?.completion ?? 0}%
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-[#4B5563]">Desempenho em questões</span>
-                    <span className="font-semibold text-[#111827] tabular-nums">
-                      {focusMetrics?.performance !== null &&
-                      focusMetrics?.performance !== undefined
-                        ? `${focusMetrics.performance}%`
-                        : '—'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-[#4B5563]">Tempo dedicado</span>
-                    <span className="font-semibold text-[#111827] tabular-nums">
-                      {formatMinutes(focusMetrics?.totalStudiedMinutes ?? 0)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-[#4B5563]">Erros em aberto</span>
-                    <span className="font-semibold text-[#111827] tabular-nums">
-                      {focusMetrics?.openErrorsCount ?? 0}
-                    </span>
-                  </div>
-                </div>
-              ) : isFocusCardUnlocked ? (
-                <div
-                  className={`my-3.5 rounded-2xl py-6 px-4 bg-gradient-to-br ${focusTheme.gradient} border ${focusTheme.border} flex flex-col items-center justify-center text-center`}
-                >
-                  <div className="w-10 h-10 rounded-full bg-white/90 shadow-sm flex items-center justify-center mb-2.5">
-                    <Award className="w-5 h-5 text-[#111827]" />
-                  </div>
-                  <p className="text-[13px] font-semibold text-[#111827]">
-                    {focusMetrics?.completedCount}{' '}
-                    {focusMetrics?.completedCount === 1
-                      ? 'descoberta concluída'
-                      : 'descobertas concluídas'}
-                  </p>
-                  <p className="text-[11.5px] text-[#4B5563] mt-0.5 line-clamp-1">
-                    {focusDiscipline?.name}
-                  </p>
-                </div>
-              ) : (
-                <div className="my-3.5 rounded-2xl py-6 px-4 bg-[#F5F5F4] border border-[#EAE9E4] flex flex-col items-center justify-center text-center">
-                  <div className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center mb-2.5">
-                    <Lock className="w-4 h-4 text-[#6B7280]" />
-                  </div>
-                  <p className="text-[13px] font-semibold text-[#1F2937]">
-                    Descoberta ainda bloqueada
-                  </p>
-                  <p className="text-[11.5px] text-[#6B7280] mt-0.5 line-clamp-1">
-                    Concluir o primeiro conteúdo de{' '}
-                    {focusDiscipline?.name ?? 'uma disciplina'}
-                  </p>
-                </div>
-              )}
-
-              {/* Barra interativa 3D */}
-              <button
-                type="button"
-                onClick={() => setCardInspect3D((v) => !v)}
-                className="w-full py-1.5 px-3 rounded-xl bg-[#F9FAFB] hover:bg-[#F3F4F6] border border-[#F3F4F6] text-[11px] font-medium text-[#6B7280] hover:text-[#111827] transition text-center cursor-pointer"
-              >
-                {cardInspect3D
-                  ? 'Voltar para visualização da carta'
-                  : 'Clique para visualizar em 3D'}
-              </button>
-
-              {/* Rodapé da carta */}
-              <div className="mt-3 pt-2.5 border-t border-[#F3F4F6] flex items-center justify-between gap-3 text-[11px]">
-                <div className="min-w-0">
-                  <span className="block text-[#9CA3AF]">Requisito:</span>
-                  <span className="font-medium text-[#374151] truncate block">
-                    {isFocusCardUnlocked
-                      ? '1º conteúdo concluído'
-                      : 'Concluir 1º conteúdo'}
-                  </span>
-                </div>
-                <div className="text-right shrink-0">
-                  <span className="block text-[#9CA3AF]">Raridade:</span>
-                  <span className="font-semibold text-[#111827]">
-                    {masteryRarity(focusMetrics?.mastery ?? 0)}
-                  </span>
-                </div>
-              </div>
-            </div>
+              Ver catálogo de cartas ({unlockedCardsCount}/{evaluatedCards.length})
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setGalleryOpen(true)}
-            className="mt-3 inline-flex items-center gap-1.5 text-[12px] font-medium text-[#6B7280] hover:text-[#111827] transition cursor-pointer"
-          >
-            Ver galeria de cartas ({unlockedCardsCount}/{disciplines.length})
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
+        )}
       </div>
 
       {/* Barra Flutuante Inferior */}
@@ -628,97 +495,13 @@ export const DashboardView: React.FC = () => {
         </div>
       </section>
 
-      {/* Modal: Galeria de Cartas */}
-      {galleryOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-[#111827]/35 backdrop-blur-xs flex items-center justify-center p-4"
-          onClick={() => setGalleryOpen(false)}
-        >
-          <div
-            className="w-full max-w-3xl max-h-[82vh] overflow-y-auto rounded-[28px] bg-[#F7F7F5] border border-[#EAE9E4] p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <h3 className="font-display text-xl font-bold text-[#111827]">
-                  Galeria de Cartas ({unlockedCardsCount}/{disciplines.length})
-                </h3>
-                <p className="text-xs text-[#6B7280] mt-0.5">
-                  Conclua o primeiro conteúdo de cada disciplina para desbloquear sua carta.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setGalleryOpen(false)}
-                className="w-8 h-8 rounded-full bg-white border border-[#EAE9E4] flex items-center justify-center text-[#6B7280] hover:text-[#111827] cursor-pointer"
-                aria-label="Fechar galeria"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {disciplines.map((d, idx) => {
-                const m = calculateDisciplineMetrics(d, sessions, errors);
-                const t = DISCIPLINE_THEMES[d.theme];
-                const unlocked = m.completedCount > 0;
-                return (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={async () => {
-                      await selectActiveDiscipline(d.id);
-                      setGalleryOpen(false);
-                    }}
-                    className="text-left rounded-2xl bg-white border border-[#EAE9E4] p-4 shadow-sm hover:shadow-md transition cursor-pointer"
-                  >
-                    <div className="flex items-center justify-between text-[10px] font-mono text-[#6B7280] mb-1">
-                      <span className="flex items-center gap-1.5 truncate">
-                        <span className={`w-2 h-2 rounded-full ${t.dot}`} />
-                        <span className="truncate font-sans font-semibold text-[#111827]">
-                          {d.name}
-                        </span>
-                      </span>
-                      <span>#{String(idx + 1).padStart(2, '0')}</span>
-                    </div>
-
-                    <div
-                      className={`my-2.5 rounded-xl py-4 px-3 flex flex-col items-center justify-center text-center ${
-                        unlocked
-                          ? `bg-gradient-to-br ${t.gradient} border ${t.border}`
-                          : 'bg-[#F5F5F4] border border-[#EAE9E4]'
-                      }`}
-                    >
-                      {unlocked ? (
-                        <>
-                          <Award className="w-5 h-5 text-[#111827] mb-1" />
-                          <span className="text-xs font-semibold text-[#111827]">
-                            DOM {m.mastery}%
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <Lock className="w-4 h-4 text-[#9CA3AF] mb-1" />
-                          <span className="text-[11px] text-[#6B7280]">
-                            Bloqueada
-                          </span>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-between text-[11px] text-[#6B7280] tabular-nums">
-                      <span>{m.completion}% trilha</span>
-                      <span className="font-medium text-[#111827]">
-                        {masteryRarity(m.mastery)}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Modal de Inspeção 3D da carta em destaque */}
+      <CardInspectorModal
+        items={evaluatedCards}
+        activeIndex={inspectCardIndex}
+        onClose={() => setInspectCardIndex(null)}
+        onSelectIndex={(idx) => setInspectCardIndex(idx)}
+      />
     </div>
   );
 };

@@ -397,30 +397,152 @@ describe('UnifiedRepository (SQLite Compartilhado)', () => {
   });
 
   it('mescla backup legado do ERRATA sem duplicar disciplinas e preservando tópicos, erros e revisões', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const cicloJson = fs.readFileSync(path.resolve(process.cwd(), 'legacy-backup-original.json'), 'utf8');
-    const errataJson = fs.readFileSync(path.resolve(process.cwd(), 'legacy-errata-original.json'), 'utf8');
+    const cicloFixture = {
+      app: 'ciclo',
+      kind: 'backup',
+      schemaVersion: 3,
+      exportedAt: '2026-11-19T03:25:32.659Z',
+      data: {
+        subjects: [
+          { id: 'sub_math', name: 'Matemática', weight: 5, difficulty: 'hard', color: '#5c64e8' },
+          { id: 'sub_pt', name: 'Português', weight: 3, difficulty: 'medium', color: '#f7a072' },
+        ],
+        settings: { cycleMinutes: 600, sessionMinutes: 50, minBlockMinutes: 25 },
+        history: [
+          {
+            id: 'h_1',
+            subjectId: 'sub_math',
+            subjectName: 'Matemática',
+            studiedMinutes: 50,
+            plannedMinutes: 50,
+            status: 'completed',
+            startedAt: '2026-11-18T10:00:00Z',
+            endedAt: '2026-11-18T10:50:00Z',
+          },
+        ],
+      },
+    };
+
+    const errataFixture = {
+      appName: 'ERRATA',
+      exportedAt: '2026-11-19T04:00:00.000Z',
+      data: {
+        subjects: [{ id: 'err_pt', name: 'Língua Portuguesa' }],
+        topics: [
+          { id: 'top_crase', subjectId: 'err_pt', name: 'Crase' },
+          { id: 'top_regencia', subjectId: 'err_pt', name: 'Regência Verbal' },
+        ],
+        errors: [
+          {
+            id: 'e_1',
+            subjectId: 'err_pt',
+            topicId: 'top_crase',
+            description: 'Usou crase antes de verbo',
+            correction: 'Não há crase antes de verbo no infinitivo',
+            prevention: 'Identificar se a palavra seguinte é verbo',
+            priority: 'superado',
+            origin: 'confusao',
+            registrationDate: '18/11/2026',
+            reviewHistory: [
+              {
+                id: 'r_1',
+                timestamp: '2026-11-19T03:00:00Z',
+                previousPriority: 'alta',
+                newPriority: 'superado',
+                action: 'revisao_2_ciclo',
+              },
+            ],
+          },
+          {
+            id: 'e_2',
+            subjectId: 'err_pt',
+            topicId: 'top_regencia',
+            description: 'Regência do verbo assistir',
+            correction: 'No sentido de ver, exige preposição "a"',
+            prevention: 'Trocar por presenciar',
+            priority: 'media',
+            origin: 'esquecimento',
+            registrationDate: '18/11/2026',
+            reviewHistory: [],
+          },
+        ],
+      },
+    };
 
     const backend = new MemoryStorageBackend();
     const repo = await UnifiedRepository.open(backend);
 
-    const res1 = await repo.restoreFromBackup(cicloJson, 'replace');
+    const res1 = await repo.restoreFromBackup(JSON.stringify(cicloFixture), 'replace');
     expect(res1.ok).toBe(true);
 
-    const res2 = await repo.restoreFromBackup(errataJson, 'merge');
+    const res2 = await repo.restoreFromBackup(JSON.stringify(errataFixture), 'merge');
     expect(res2.ok).toBe(true);
 
     const loaded = repo.loadAll();
-    // Continua com exatamente as 4 disciplinas (sem duplicar Língua Portuguesa / Português)
-    expect(loaded.disciplines.length).toBe(4);
-    expect(loaded.sessions.length).toBe(26);
-    expect(loaded.errors.length).toBe(8);
-    expect(loaded.errors.filter((e) => e.priority === 'superado').length).toBe(6);
-    expect(loaded.errors.filter((e) => e.priority === 'media').length).toBe(2);
+    // Continua com exatamente 2 disciplinas (sem duplicar Língua Portuguesa / Português)
+    expect(loaded.disciplines.length).toBe(2);
+    expect(loaded.sessions.length).toBe(1);
+    expect(loaded.errors.length).toBe(2);
+    expect(loaded.errors.filter((e) => e.priority === 'superado').length).toBe(1);
+    expect(loaded.errors.filter((e) => e.priority === 'media').length).toBe(1);
 
     const pt = loaded.disciplines.find((d) => d.name === 'Português')!;
-    expect(flattenContents(pt).length).toBe(6);
+    expect(flattenContents(pt).length).toBe(2);
+  });
+
+  it('coloca banco corrompido em quarentena, recupera fila persistChain após erro transitório e compacta sync_outbox', async () => {
+    const backend = new MemoryStorageBackend();
+    // Simula bytes corrompidos
+    await backend.saveBytes(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]));
+
+    const repo = await UnifiedRepository.open(backend);
+    expect(backend.quarantinedCount).toBe(1);
+    expect(repo.recoveryNotice).toBeTruthy();
+
+    // Testa compactação de sync_outbox ao salvar a mesma disciplina várias vezes
+    const disc = repo.loadAll().disciplines[0];
+    await repo.saveDiscipline({ ...disc, description: 'v1' });
+    await repo.saveDiscipline({ ...disc, description: 'v2' });
+    await repo.saveDiscipline({ ...disc, description: 'v3' });
+    expect(repo.loadAll().syncSummary.pendingChanges).toBe(1);
+
+    // Testa que persistChain se recupera após uma falha transitória de I/O
+    const originalSave = backend.saveBytes.bind(backend);
+    let failOnce = true;
+    backend.saveBytes = async (bytes: Uint8Array) => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error('EBUSY: transient lock');
+      }
+      await originalSave(bytes);
+    };
+
+    await expect(repo.updateUserName('Falha Transitória')).rejects.toThrow('EBUSY');
+    await expect(repo.updateUserName('Recuperado')).resolves.toBeUndefined();
+    expect(repo.loadAll().meta.userName).toBe('Recuperado');
+
+    // Testa restauração de .sqlite e ocultação de erros/sessões de disciplina excluída
+    const sqliteBytes = repo.exportSqliteBytes();
+    const repoFromSqlite = await UnifiedRepository.open(new MemoryStorageBackend());
+    const sqliteRes = await repoFromSqlite.restoreFromSqliteBytes(sqliteBytes);
+    expect(sqliteRes.ok).toBe(true);
+    expect(repoFromSqlite.loadAll().meta.userName).toBe('Recuperado');
+
+    const d0 = repoFromSqlite.loadAll().disciplines[0];
+    const c0 = flattenContents(d0)[0];
+    await repoFromSqlite.addErrorRecord({
+      disciplineId: d0.id,
+      contentId: c0.id,
+      description: 'Erro teste',
+      correction: 'Correção teste',
+      prevention: '',
+      priority: 'alta',
+      origin: 'confusao',
+      registrationDate: '22/11/2026',
+    });
+    expect(repoFromSqlite.loadAll().errors.length).toBe(1);
+    await repoFromSqlite.deleteDiscipline(d0.id, d0.name);
+    expect(repoFromSqlite.loadAll().errors.length).toBe(0);
   });
 
   it('isola disciplinas, ciclo de estudos e estatísticas por concurso ao alternar entre múltiplos concursos', async () => {

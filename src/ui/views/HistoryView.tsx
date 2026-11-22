@@ -14,10 +14,6 @@ export const HistoryView: React.FC = () => {
   const [tab, setTab] = useState<HistoryFilter>('all');
   const [discFilter, setDiscFilter] = useState('all');
 
-  const series = useMemo(() => dailyStudySeries(sessions, 14), [sessions]);
-  const maxDayMin = Math.max(1, ...series.map((s) => s.minutes));
-  const totalMin = totalStudiedMinutes(sessions);
-
   const filteredSessions = useMemo(
     () =>
       sessions.filter((s) =>
@@ -25,6 +21,13 @@ export const HistoryView: React.FC = () => {
       ),
     [sessions, discFilter],
   );
+
+  const series = useMemo(
+    () => dailyStudySeries(filteredSessions, 14),
+    [filteredSessions],
+  );
+  const maxDayMin = Math.max(1, ...series.map((s) => s.minutes));
+  const totalMin = totalStudiedMinutes(filteredSessions);
 
   const filteredLogs = useMemo(
     () =>
@@ -64,7 +67,8 @@ export const HistoryView: React.FC = () => {
             Ritmo dos Últimos 14 Dias
           </h3>
           <span className="text-xs text-[#6B7280] tabular-nums">
-            Total acumulado: {formatMinutes(totalMin)} ({sessions.length} sessões)
+            Total acumulado: {formatMinutes(totalMin)} ({filteredSessions.length}{' '}
+            {filteredSessions.length === 1 ? 'sessão' : 'sessões'})
           </span>
         </div>
         <div className="grid grid-cols-14 gap-1.5 items-end h-28 pt-2">

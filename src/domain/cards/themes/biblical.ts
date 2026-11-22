@@ -93,7 +93,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'O Libertador e Legislador',
     rarity: 'rara',
     reference: 'Êxodo 3:10-14 · Êxodo 34:29',
-    imageUrl: '/cards/biblical/moses.jpg',
+    imageUrl: './cards/biblical/moses.jpg',
     artwork: {
       title: 'Moisés (Estátua da Tumba de Júlio II)',
       artist: 'Michelangelo Buonarroti',
@@ -129,7 +129,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'O Pastor, Salmista e Rei',
     rarity: 'lendaria',
     reference: '1 Samuel 16:13 · Salmos 23',
-    imageUrl: '/cards/biblical/david-king.jpg',
+    imageUrl: './cards/biblical/david-king.jpg',
     artwork: {
       title: 'Davi',
       artist: 'Michelangelo Buonarroti',
@@ -165,7 +165,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'O Rei da Sabedoria',
     rarity: 'epica',
     reference: '1 Reis 3:9-12 · Provérbios 4:7',
-    imageUrl: '/cards/biblical/solomon.jpg',
+    imageUrl: './cards/biblical/solomon.jpg',
     artwork: {
       title: 'O Julgamento de Salomão',
       artist: 'Obra Clássica Europeia',
@@ -201,7 +201,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'A Voz do Monte Carmelo',
     rarity: 'epica',
     reference: '1 Reis 18:36-39 · 2 Reis 2:11',
-    imageUrl: '/cards/biblical/elijah.jpg',
+    imageUrl: './cards/biblical/elijah.jpg',
     artwork: {
       title: 'Elias no Monte Horebe / Tradição Iconográfica',
       artist: 'Arte Sacra Clássica',
@@ -237,7 +237,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'Graça, Humildade e Entrega',
     rarity: 'rara',
     reference: 'Lucas 1:26-38 · Lucas 1:46-55',
-    imageUrl: '/cards/biblical/mary.jpg',
+    imageUrl: './cards/biblical/mary.jpg',
     artwork: {
       title: 'A Anunciação',
       artist: 'Leonardo da Vinci & Andrea del Verrocchio',
@@ -273,7 +273,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'O Apóstolo das Nações',
     rarity: 'epica',
     reference: 'Atos 9:1-19 · 2 Timóteo 4:7',
-    imageUrl: '/cards/biblical/paul.jpg',
+    imageUrl: './cards/biblical/paul.jpg',
     artwork: {
       title: 'A Conversão de São Paulo no Caminho de Damasco',
       artist: 'Caravaggio (Michelangelo Merisi)',
@@ -313,7 +313,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'Aliança em Meio ao Dilúvio',
     rarity: 'comum',
     reference: 'Gênesis 6:14-22 · Gênesis 9:13',
-    imageUrl: '/cards/biblical/noah-ark.jpg',
+    imageUrl: './cards/biblical/noah-ark.jpg',
     artwork: {
       title: 'A Arca de Noé',
       artist: 'Edward Hicks / Acervo Clássico',
@@ -349,7 +349,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'Caminho Aberto no Impossível',
     rarity: 'lendaria',
     reference: 'Êxodo 14:13-22',
-    imageUrl: '/cards/biblical/red-sea.jpg',
+    imageUrl: './cards/biblical/red-sea.jpg',
     artwork: {
       title: 'A Travessia do Mar Vermelho',
       artist: 'Nicolas Poussin',
@@ -385,7 +385,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'Fidelidade Sob Provação',
     rarity: 'epica',
     reference: 'Daniel 6:10-23',
-    imageUrl: '/cards/biblical/daniel-lions.jpg',
+    imageUrl: './cards/biblical/daniel-lions.jpg',
     artwork: {
       title: 'Daniel na Cova dos Leões',
       artist: 'Peter Paul Rubens',
@@ -421,7 +421,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'O Triunfo da Precisão Sobre a Força',
     rarity: 'rara',
     reference: '1 Samuel 17:45-50',
-    imageUrl: '/cards/biblical/david-goliath.jpg',
+    imageUrl: './cards/biblical/david-goliath.jpg',
     artwork: {
       title: 'Davi com a Cabeça de Golias',
       artist: 'Caravaggio (Michelangelo Merisi)',
@@ -457,7 +457,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'Lição Sobre Humildade e Linguagem',
     rarity: 'rara',
     reference: 'Gênesis 11:1-9',
-    imageUrl: '/cards/biblical/tower-of-babel.jpg',
+    imageUrl: './cards/biblical/tower-of-babel.jpg',
     artwork: {
       title: 'A Torre de Babel',
       artist: 'Pieter Bruegel, o Velho',
@@ -497,7 +497,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'Soberania Sobre os Ventos e o Mar',
     rarity: 'lendaria',
     reference: 'Marcos 4:35-41 · Mateus 8:23-27',
-    imageUrl: '/cards/biblical/storm-galilee.jpg',
+    imageUrl: './cards/biblical/storm-galilee.jpg',
     artwork: {
       title: 'Cristo na Tempestade no Mar da Galileia',
       artist: 'Rembrandt van Rijn',
@@ -533,7 +533,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'Abundância que Nasce da Partilha',
     rarity: 'comum',
     reference: 'João 6:1-14 · Mateus 14:13-21',
-    imageUrl: '/cards/biblical/loaves-fishes.jpg',
+    imageUrl: './cards/biblical/loaves-fishes.jpg',
     artwork: {
       title: 'A Multiplicação dos Pães e dos Peixes',
       artist: 'Arte Sacra Clássica',
@@ -569,7 +569,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'Fé Acima das Ondas',
     rarity: 'epica',
     reference: 'Mateus 14:22-33',
-    imageUrl: '/cards/biblical/walking-water.jpg',
+    imageUrl: './cards/biblical/walking-water.jpg',
     artwork: {
       title: 'Cristo Caminhando Sobre as Águas',
       artist: 'Ivan Aivazovsky',
@@ -594,7 +594,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
         const minutes = getTotalStudiedMinutes(ctx);
         const cycles = ctx.cycleState.completedCycles;
         return {
-          current: cycles >= 1 ? 180 : Math.min(179, minutes),
+          current: cycles >= 1 ? 180 : minutes,
           target: 180,
         };
       },
@@ -609,7 +609,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'Vida Onde Havia Fim',
     rarity: 'lendaria',
     reference: 'João 11:1-44',
-    imageUrl: '/cards/biblical/lazarus.jpg',
+    imageUrl: './cards/biblical/lazarus.jpg',
     artwork: {
       title: 'A Ressurreição de Lázaro',
       artist: 'Caravaggio (Michelangelo Merisi)',
@@ -645,7 +645,7 @@ export const BIBLICAL_CARDS: CollectibleCard[] = [
     subtitle: 'O Primeiro Sinal na Galileia',
     rarity: 'rara',
     reference: 'João 2:1-11',
-    imageUrl: '/cards/biblical/wedding-cana.jpg',
+    imageUrl: './cards/biblical/wedding-cana.jpg',
     artwork: {
       title: 'As Bodas de Caná',
       artist: 'Paolo Veronese',

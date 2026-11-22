@@ -598,24 +598,6 @@ export function createStarterDisciplines(examId: string = DEFAULT_EXAM_ID): Disc
     inCycle: true,
     sortOrder: 0,
   });
-  // Marca os 2 primeiros conteúdos como concluídos/em andamento para demonstrar o fluxo integrado
-  const firstContents = math.levels[0]?.modules[0]?.contents ?? [];
-  if (firstContents[0]) {
-    firstContents[0].status = 'concluido';
-    firstContents[0].completedAt = new Date().toISOString();
-    firstContents[0].lastStudiedAt = new Date().toISOString();
-    firstContents[0].exercisesDone = 10;
-    firstContents[0].exercisesCorrect = 9;
-    firstContents[0].checklist = firstContents[0].checklist.map((c) => ({
-      ...c,
-      done: true,
-    }));
-  }
-  if (firstContents[1]) {
-    firstContents[1].status = 'em_andamento';
-    firstContents[1].lastStudiedAt = new Date().toISOString();
-    firstContents[1].checklist[0].done = true;
-  }
 
   const portuguese = instantiateTrailTemplate(TRAIL_TEMPLATES[1], {
     examId,

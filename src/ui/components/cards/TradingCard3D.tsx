@@ -146,6 +146,13 @@ export const TradingCard3D: React.FC<TradingCard3DProps> = ({
     else setInternalFlipped(next);
   };
 
+  const cardImageSrc =
+    typeof window !== 'undefined' &&
+    window.totalControleDesktop?.isDesktop &&
+    card.imageUrl.startsWith('./cards/')
+      ? `tc-card://local/${card.imageUrl.slice('./cards/'.length)}`
+      : card.imageUrl;
+
   return (
     <div
       className={`tcg-scene select-none ${
@@ -272,7 +279,7 @@ export const TradingCard3D: React.FC<TradingCard3DProps> = ({
                   }`}
                 >
                   <img
-                    src={card.imageUrl}
+                    src={cardImageSrc}
                     alt={unlocked ? `${card.name} — ${card.artwork.title}` : 'Silhueta bloqueada'}
                     loading="lazy"
                     className={`w-full h-full object-cover transition-all duration-300 ${

@@ -60,6 +60,7 @@ export const StatsView: React.FC = () => {
     allSessions,
     allErrors,
     cycleState,
+    totalCompletedCycles,
     setActiveTab,
   } = useApp();
   const [scope, setScope] = useState<'exam' | 'all'>('exam');
@@ -70,6 +71,13 @@ export const StatsView: React.FC = () => {
   const scopedDisciplines = scope === 'exam' ? disciplines : allDisciplines;
   const scopedSessions = scope === 'exam' ? sessions : allSessions;
   const scopedErrors = scope === 'exam' ? errors : allErrors;
+  const effectiveCycleState = useMemo(
+    () =>
+      scope === 'exam'
+        ? cycleState
+        : { ...cycleState, completedCycles: totalCompletedCycles },
+    [scope, cycleState, totalCompletedCycles],
+  );
 
   const activeDisciplines = useMemo(
     () => scopedDisciplines.filter((d) => !d.deletedAt),
@@ -89,12 +97,24 @@ export const StatsView: React.FC = () => {
   const origin = useMemo(() => sessionOriginBreakdown(scopedSessions), [scopedSessions]);
   const heatmap = useMemo(() => heatmapSeries(scopedSessions, 16), [scopedSessions]);
   const journey = useMemo(
-    () => calculateJourneyLevel(activeDisciplines, scopedSessions, scopedErrors, cycleState),
-    [activeDisciplines, scopedSessions, scopedErrors, cycleState],
+    () =>
+      calculateJourneyLevel(
+        activeDisciplines,
+        scopedSessions,
+        scopedErrors,
+        effectiveCycleState,
+      ),
+    [activeDisciplines, scopedSessions, scopedErrors, effectiveCycleState],
   );
   const milestones = useMemo(
-    () => computeMilestones(activeDisciplines, scopedSessions, scopedErrors, cycleState),
-    [activeDisciplines, scopedSessions, scopedErrors, cycleState],
+    () =>
+      computeMilestones(
+        activeDisciplines,
+        scopedSessions,
+        scopedErrors,
+        effectiveCycleState,
+      ),
+    [activeDisciplines, scopedSessions, scopedErrors, effectiveCycleState],
   );
   const insights = useMemo(
     () => generateUserInsights(activeDisciplines, scopedSessions, scopedErrors),
@@ -331,7 +351,11 @@ export const StatsView: React.FC = () => {
                 </div>
               ) : (
                 <div className="inline-flex flex-col items-end px-3 py-1.5 rounded-xl bg-[#F7F7F5] border border-[#EAE9E4] text-[11.5px] tabular-nums">
-                  <span className="text-[#9CA3AF] text-[10.5px]">Média no gráfico</span>
+                  <span className="text-[#9CA3AF] text-[10.5px]">
+                    {period === '90d' || period === 'all'
+                      ? 'Média (últimos 42 dias)'
+                      : 'Média no gráfico'}
+                  </span>
                   <span className="font-semibold text-[#111827]">
                     {formatMinutes(periodStats.avgPerDay)}/dia
                   </span>
@@ -522,8 +546,8 @@ export const StatsView: React.FC = () => {
             {formatMinutes(global.totalStudiedMinutes)}
           </p>
           <p className="text-[11.5px] text-[#6B7280] mt-1 tabular-nums">
-            {sessions.length}{' '}
-            {sessions.length === 1 ? 'sessão registrada' : 'sessões registradas'}
+            {scopedSessions.length}{' '}
+            {scopedSessions.length === 1 ? 'sessão registrada' : 'sessões registradas'}
           </p>
         </div>
 

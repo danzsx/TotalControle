@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Pencil,
   ShieldAlert,
   Sparkles,
   Trash2,
@@ -36,6 +37,7 @@ interface ErrorCardProps {
   onToggleReveal: () => void;
   onOpenInTrail: () => void;
   onChangePriority: (newPriority: PriorityLevel) => Promise<void>;
+  onRequestEdit: () => void;
   onRequestDelete: () => void;
 }
 
@@ -48,6 +50,7 @@ export const ErrorCard: React.FC<ErrorCardProps> = ({
   onToggleReveal,
   onOpenInTrail,
   onChangePriority,
+  onRequestEdit,
   onRequestDelete,
 }) => {
   const [expanded, setExpanded] = useState(false);
@@ -265,15 +268,26 @@ export const ErrorCard: React.FC<ErrorCardProps> = ({
           </span>
         </div>
 
-        <button
-          type="button"
-          onClick={onRequestDelete}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[#9CA3AF] hover:text-[#DC2626] hover:bg-[#FEF2F2] transition cursor-pointer"
-          aria-label="Excluir registro de erro"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-          <span>Excluir</span>
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onRequestEdit}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[#6B7280] hover:text-[#111827] hover:bg-[#F3F4F6] transition cursor-pointer"
+            aria-label="Editar registro de erro"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            <span>Editar</span>
+          </button>
+          <button
+            type="button"
+            onClick={onRequestDelete}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[#9CA3AF] hover:text-[#DC2626] hover:bg-[#FEF2F2] transition cursor-pointer"
+            aria-label="Excluir registro de erro"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Excluir</span>
+          </button>
+        </div>
       </div>
     </article>
   );

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, Plus, Search } from 'lucide-react';
 import { useApp } from '../../application/AppContext';
-import { PRIORITY_LIST, SELECTABLE_ORIGINS } from '../../domain/constants';
+import { ORIGINS, PRIORITY_LIST, SELECTABLE_ORIGINS } from '../../domain/constants';
 import { flattenContents } from '../../domain/mastery';
 import { errorOriginDistribution } from '../../domain/stats';
 import { normalizeText } from '../../domain/text';
@@ -32,6 +32,7 @@ export const ErrorsView: React.FC = () => {
     errorPrefill,
     clearErrorPrefill,
     registerError,
+    updateError,
     submitErrorReview,
     deleteError,
     openContentInTrail,
@@ -42,6 +43,7 @@ export const ErrorsView: React.FC = () => {
   const [filterPriority, setFilterPriority] = useState<PriorityLevel | 'all'>('all');
   const [filterOrigin, setFilterOrigin] = useState<ErrorOrigin | 'all'>('all');
   const [confirmDeleteErr, setConfirmDeleteErr] = useState<ErrorRecord | null>(null);
+  const [editingError, setEditingError] = useState<ErrorRecord | null>(null);
   const [revealedIds, setRevealedIds] = useState<Record<string, boolean>>({});
   const [registerModalOpen, setRegisterModalOpen] = useState(false);
   const [prefillTarget, setPrefillTarget] = useState<{
@@ -139,6 +141,7 @@ export const ErrorsView: React.FC = () => {
   };
 
   const openNewErrorModal = () => {
+    setEditingError(null);
     setPrefillTarget({
       disciplineId:
         selectedDiscId !== 'all' ? selectedDiscId : disciplines[0]?.id,
@@ -252,6 +255,9 @@ export const ErrorsView: React.FC = () => {
                     {o.label}
                   </option>
                 ))}
+                <option value="nao_classificado">
+                  {ORIGINS.nao_classificado.label}
+                </option>
               </select>
             </div>
 
@@ -327,6 +333,10 @@ export const ErrorsView: React.FC = () => {
                   onChangePriority={(nextPriority) =>
                     submitErrorReview(err, nextPriority, 'alteracao_rapida')
                   }
+                  onRequestEdit={() => {
+                    setEditingError(err);
+                    setRegisterModalOpen(true);
+                  }}
                   onRequestDelete={() => setConfirmDeleteErr(err)}
                 />
               ))}
@@ -370,8 +380,13 @@ export const ErrorsView: React.FC = () => {
         disciplines={disciplines}
         initialDisciplineId={prefillTarget?.disciplineId}
         initialContentId={prefillTarget?.contentId}
-        onClose={() => setRegisterModalOpen(false)}
+        editingError={editingError}
+        onClose={() => {
+          setRegisterModalOpen(false);
+          setEditingError(null);
+        }}
         onSubmit={registerError}
+        onUpdate={updateError}
       />
 
       <ConfirmDialog

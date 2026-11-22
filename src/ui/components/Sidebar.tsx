@@ -14,7 +14,7 @@ import {
   SlidersHorizontal,
   Sparkles,
 } from 'lucide-react';
-import { useApp } from '../../application/AppContext';
+import { useApp, useSessionTimer } from '../../application/AppContext';
 import { DISCIPLINE_THEMES } from '../../domain/constants';
 import { detectStudyContext } from '../../domain/stats';
 import type { NavTab } from '../../domain/types';
@@ -35,12 +35,16 @@ const NAV_ITEMS: Array<{
   { id: 'history', label: 'Evolução', icon: History },
 ];
 
+const ActiveSessionTimerBadge: React.FC = () => {
+  const elapsedSessionMs = useSessionTimer();
+  return <TimerReadout ms={elapsedSessionMs} className="text-[11px] font-semibold" />;
+};
+
 export const Sidebar: React.FC = () => {
   const {
     activeTab,
     setActiveTab,
     activeSession,
-    elapsedSessionMs,
     errors,
     cycleState,
     exams,
@@ -53,6 +57,7 @@ export const Sidebar: React.FC = () => {
     errorsAllDisciplines,
     setErrorsAllDisciplines,
     evaluatedCards,
+    cardsEnabled,
   } = useApp();
 
   const [examMenuOpen, setExamMenuOpen] = useState(false);
@@ -180,7 +185,7 @@ export const Sidebar: React.FC = () => {
 
       {/* Navegação principal */}
       <nav className="space-y-0.5" aria-label="Navegação principal">
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.filter((item) => item.id !== 'cards' || cardsEnabled).map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
           return (
@@ -297,7 +302,7 @@ export const Sidebar: React.FC = () => {
                 <Clock className="w-3 h-3" />
                 {activeSession.status === 'running' ? 'Em curso' : 'Pausada'}
               </span>
-              <TimerReadout ms={elapsedSessionMs} className="text-[11px] font-semibold" />
+              <ActiveSessionTimerBadge />
             </div>
             <p className="text-[12px] font-semibold text-[#111827] truncate">
               {activeSession.disciplineName}

@@ -46,11 +46,21 @@ export function evaluateAllCards(
   unlockedAtMap: Record<string, string>,
 ): EvaluatedCard[] {
   return ALL_CARDS.map((card) => {
-    const evaluation = evaluateCardAchievement(card, ctx);
+    const rawEval = evaluateCardAchievement(card, ctx);
+    const previouslyUnlockedAt = unlockedAtMap[card.id] ?? null;
+    const isUnlocked = rawEval.unlocked || Boolean(previouslyUnlockedAt);
+    const evaluation: AchievementEvaluation = isUnlocked && !rawEval.unlocked
+      ? {
+          ...rawEval,
+          current: Math.max(rawEval.current, rawEval.target),
+          progressPct: 100,
+          unlocked: true,
+        }
+      : rawEval;
     return {
       card,
       evaluation,
-      unlockedAt: evaluation.unlocked ? (unlockedAtMap[card.id] ?? null) : null,
+      unlockedAt: isUnlocked ? previouslyUnlockedAt : null,
     };
   });
 }

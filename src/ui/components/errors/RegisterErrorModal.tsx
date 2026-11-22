@@ -14,13 +14,18 @@ import type {
   PriorityLevel,
   Result,
 } from '../../../domain/types';
-import { composeErrorDescription } from './errorHelpers';
+import {
+  composeErrorDescription,
+  parseErrorDescription,
+} from './errorHelpers';
+import { validateErrorInput } from '../../../domain/validation';
 
 interface RegisterErrorModalProps {
   open: boolean;
   disciplines: Discipline[];
   initialDisciplineId?: string;
   initialContentId?: string;
+  editingError?: ErrorRecord | null;
   onClose: () => void;
   onSubmit: (input: {
     disciplineId: string;
@@ -33,6 +38,7 @@ interface RegisterErrorModalProps {
     registrationDate: string;
     referenceQuestion?: ErrorRecord['referenceQuestion'];
   }) => Promise<Result<ErrorRecord>>;
+  onUpdate?: (record: ErrorRecord) => Promise<void>;
 }
 
 export const RegisterErrorModal: React.FC<RegisterErrorModalProps> = ({
@@ -40,9 +46,12 @@ export const RegisterErrorModal: React.FC<RegisterErrorModalProps> = ({
   disciplines,
   initialDisciplineId,
   initialContentId,
+  editingError = null,
   onClose,
   onSubmit,
+  onUpdate,
 }) => {
+  const isEditing = Boolean(editingError);
   const [formDiscId, setFormDiscId] = useState(
     initialDisciplineId || disciplines[0]?.id || '',
   );
@@ -59,19 +68,42 @@ export const RegisterErrorModal: React.FC<RegisterErrorModalProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Sincroniza disciplina/conteúdo ao abrir modal
+  // Sincroniza campos apenas ao abrir o modal ou trocar alvo inicial/edição (sem travar troca manual de disciplina)
   useEffect(() => {
     if (!open) return;
     setFormError(null);
-    if (initialDisciplineId) {
-      setFormDiscId(initialDisciplineId);
-    } else if (!formDiscId && disciplines[0]?.id) {
-      setFormDiscId(disciplines[0].id);
+    if (editingError) {
+      const parsed = parseErrorDescription(editingError.description);
+      setFormDiscId(editingError.disciplineId);
+      setFormContentId(editingError.contentId);
+      setFormOrigin(
+        editingError.origin === 'nao_classificado'
+          ? 'desconhecimento'
+          : editingError.origin,
+      );
+      setFormPriority(editingError.priority);
+      setFormDate(editingError.registrationDate || formatToDDMMYYYY());
+      setFormBoard(editingError.referenceQuestion?.examBoard ?? '');
+      setFormTimeSpent(parsed.timeTag ?? '');
+      setFormStatement(parsed.statement);
+      setFormBottleneck(parsed.bottleneck ?? '');
+      setFormCorr(editingError.correction);
+      setFormPrev(editingError.prevention);
+      return;
     }
-    if (initialContentId) {
-      setFormContentId(initialContentId);
-    }
-  }, [open, initialDisciplineId, initialContentId, disciplines, formDiscId]);
+
+    setFormDiscId(initialDisciplineId || disciplines[0]?.id || '');
+    setFormContentId(initialContentId || '');
+    setFormOrigin('desconhecimento');
+    setFormPriority('alta');
+    setFormDate(formatToDDMMYYYY());
+    setFormBoard('');
+    setFormTimeSpent('');
+    setFormStatement('');
+    setFormBottleneck('');
+    setFormCorr('');
+    setFormPrev('');
+  }, [open, editingError, initialDisciplineId, initialContentId, disciplines]);
 
   const formContents = useMemo(() => {
     const disc = disciplines.find((d) => d.id === formDiscId);
@@ -110,6 +142,46 @@ export const RegisterErrorModal: React.FC<RegisterErrorModalProps> = ({
         bottleneck: formBottleneck,
         timeSpent: formTimeSpent,
       });
+
+      if (editingError && onUpdate) {
+        const check = validateErrorInput({
+          disciplineId: formDiscId,
+          contentId: formContentId,
+          origin: formOrigin,
+          description,
+          correction: formCorr,
+          registrationDate: formDate,
+        });
+        if (!check.ok) {
+          setFormError(check.error);
+          return;
+        }
+        await onUpdate({
+          ...editingError,
+          disciplineId: formDiscId,
+          contentId: formContentId,
+          description: description.trim(),
+          correction: formCorr.trim(),
+          prevention: formPrev.trim(),
+          priority: formPriority,
+          origin: formOrigin,
+          registrationDate: formDate.trim(),
+          referenceQuestion: formBoard.trim()
+            ? {
+                ...editingError.referenceQuestion,
+                examBoard: formBoard.trim(),
+              }
+            : editingError.referenceQuestion?.questionNumber ||
+                editingError.referenceQuestion?.link
+              ? {
+                  ...editingError.referenceQuestion,
+                  examBoard: undefined,
+                }
+              : undefined,
+        });
+        onClose();
+        return;
+      }
 
       const res = await onSubmit({
         disciplineId: formDiscId,
@@ -159,10 +231,12 @@ export const RegisterErrorModal: React.FC<RegisterErrorModalProps> = ({
               id="register-error-title"
               className="font-display text-xl font-bold text-[#111827]"
             >
-              Registrar erro no caderno
+              {isEditing ? 'Editar registro de erro' : 'Registrar erro no caderno'}
             </h3>
             <p className="text-xs text-[#6B7280] mt-0.5">
-              Registre de forma objetiva para revisar por evocação ativa depois.
+              {isEditing
+                ? 'Atualize os detalhes sem perder o histórico de revisões.'
+                : 'Registre de forma objetiva para revisar por evocação ativa depois.'}
             </p>
           </div>
           <button
@@ -372,7 +446,11 @@ export const RegisterErrorModal: React.FC<RegisterErrorModalProps> = ({
               disabled={saving}
               className="px-5 py-2.5 rounded-xl bg-[#111827] hover:bg-[#1F2937] text-white text-sm font-medium shadow-sm disabled:opacity-60 transition cursor-pointer"
             >
-              {saving ? 'Salvando...' : 'Salvar no caderno'}
+              {saving
+                ? 'Salvando...'
+                : isEditing
+                  ? 'Salvar alterações'
+                  : 'Salvar no caderno'}
             </button>
           </div>
         </form>

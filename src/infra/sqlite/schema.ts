@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS disciplines (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   deleted_at TEXT,
-  sync_status TEXT NOT NULL DEFAULT 'pending'
+  sync_status TEXT NOT NULL DEFAULT 'pending',
+  FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS trail_levels (

@@ -366,6 +366,7 @@ export interface BackupPayload {
   sessions: SessionRecord[];
   errors: ErrorRecord[];
   operationLogs: OperationLog[];
+  unlockedCards?: Record<string, string>;
 }
 
 export interface AppMeta {

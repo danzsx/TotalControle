@@ -51,7 +51,14 @@
       "dist/**/*",
       "electron/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "public/cards",
+        "to": "cards"
+      }
+    ],
     "win": {
+      "icon": "electron/icon.ico",
       "target": [
         "nsis",
         "portable"

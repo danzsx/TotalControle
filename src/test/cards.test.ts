@@ -47,8 +47,50 @@ describe('Catálogo Modular de Cartas & Conquistas', () => {
     const validCategories = new Set(biblical!.categories.map((c) => c.id));
     for (const card of cards) {
       expect(validCategories.has(card.categoryId)).toBe(true);
-      expect(card.imageUrl).toMatch(/^\/cards\/biblical\/.+\.jpg$/);
+      expect(card.imageUrl).toMatch(/^\.\/cards\/biblical\/.+\.jpg$/);
     }
+  });
+
+  it('desbloqueia Caminhando Sobre as Águas com 180 minutos mesmo sem ciclo concluído e preserva conquistas já desbloqueadas', () => {
+    const emptyCtx = makeEmptyContext();
+    const walkingWater = ALL_CARDS.find((c) => c.id === 'bib-walking-water')!;
+    const ctx180: AchievementContext = {
+      ...emptyCtx,
+      sessions: [
+        {
+          id: 's-180',
+          origin: 'trilha',
+          disciplineId: 'd-1',
+          disciplineName: 'TI',
+          disciplineTheme: 'sky',
+          contentId: null,
+          contentTitle: null,
+          cycleNumber: 0,
+          blockIndex: -1,
+          startedAt: '2026-11-01T10:00:00Z',
+          endedAt: '2026-11-01T13:00:00Z',
+          plannedMinutes: 180,
+          studiedMinutes: 180,
+          status: 'completed',
+          notes: '',
+          createdAt: '2026-11-01T10:00:00Z',
+          updatedAt: '2026-11-01T13:00:00Z',
+          syncStatus: 'pending',
+        },
+      ],
+    };
+
+    const eval180 = evaluateCardAchievement(walkingWater, ctx180);
+    expect(eval180.current).toBe(180);
+    expect(eval180.unlocked).toBe(true);
+
+    // Uma vez registrada no mapa de desbloqueio, a carta permanece desbloqueada
+    const evaluatedWithMap = evaluateAllCards(emptyCtx, {
+      'bib-walking-water': '2026-11-01T13:00:00Z',
+    });
+    const preserved = evaluatedWithMap.find((i) => i.card.id === 'bib-walking-water')!;
+    expect(preserved.evaluation.unlocked).toBe(true);
+    expect(preserved.unlockedAt).toBe('2026-11-01T13:00:00Z');
   });
 
   it('mantém cartas avançadas bloqueadas com progresso inicial e desbloqueia quando conquistas são atingidas', () => {

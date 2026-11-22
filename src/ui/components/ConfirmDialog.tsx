@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -21,12 +21,32 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   onConfirm,
   onCancel,
 }) => {
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onCancel]);
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/30 backdrop-blur-xs p-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/30 backdrop-blur-xs p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-dialog-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
       <div className="w-full max-w-md rounded-[26px] bg-white border border-[#EAE9E4] p-6 shadow-[0_20px_50px_rgba(17,24,39,0.12)]">
-        <h3 className="font-display text-lg font-bold text-[#111827]">
+        <h3
+          id="confirm-dialog-title"
+          className="font-display text-lg font-bold text-[#111827]"
+        >
           {title}
         </h3>
         <p className="mt-2 text-sm text-[#6B7280] leading-relaxed">{message}</p>

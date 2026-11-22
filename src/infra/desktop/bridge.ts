@@ -3,11 +3,16 @@ export interface DesktopBridge {
   loadDbBytes: () => Promise<{
     ok: boolean;
     source?: 'main' | 'backup' | 'none';
-    bytes?: number[] | null;
+    bytes?: Uint8Array | number[] | null;
     error?: string;
   }>;
-  saveDbBytes: (bytesArray: number[]) => Promise<{ ok: boolean; error?: string }>;
-  quarantineDb: () => Promise<{ ok: boolean; backupBytes?: number[] | null }>;
+  saveDbBytes: (bytesArray: Uint8Array | number[]) => Promise<{ ok: boolean; error?: string }>;
+  quarantineDb: () => Promise<{
+    ok: boolean;
+    quarantinedPath?: string | null;
+    backupBytes?: Uint8Array | number[] | null;
+    error?: string;
+  }>;
   getDbLocation: () => Promise<{
     dir: string;
     dbPath: string;
@@ -20,11 +25,11 @@ export interface DesktopBridge {
     defaultName: string;
     content: string;
     filters?: Array<{ name: string; extensions: string[] }>;
-  }) => Promise<{ canceled: boolean; filePath?: string }>;
+  }) => Promise<{ canceled: boolean; filePath?: string; error?: string }>;
   exportSqliteFile: (payload: {
     defaultName: string;
-    bytesArray: number[];
-  }) => Promise<{ canceled: boolean; filePath?: string }>;
+    bytesArray: Uint8Array | number[];
+  }) => Promise<{ canceled: boolean; filePath?: string; error?: string }>;
 }
 
 declare global {
@@ -65,15 +70,24 @@ async function idbGet(): Promise<Uint8Array | null> {
   });
 }
 
-async function idbSet(bytes: Uint8Array): Promise<void> {
+async function idbSetKey(key: string, bytes: Uint8Array): Promise<void> {
   if (typeof indexedDB === 'undefined') return;
   const db = await openIdb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');
-    const req = tx.objectStore(IDB_STORE).put(bytes, IDB_KEY);
+    const req = tx.objectStore(IDB_STORE).put(bytes, key);
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
+}
+
+async function idbSet(bytes: Uint8Array): Promise<void> {
+  await idbSetKey(IDB_KEY, bytes);
+}
+
+function toUint8Array(raw: Uint8Array | number[] | null | undefined): Uint8Array | null {
+  if (!raw) return null;
+  return raw instanceof Uint8Array ? raw : new Uint8Array(raw);
 }
 
 function triggerBrowserDownload(filename: string, blob: Blob): void {
@@ -91,6 +105,10 @@ export interface StorageBackend {
   isDesktop: boolean;
   loadBytes(): Promise<Uint8Array | null>;
   saveBytes(bytes: Uint8Array): Promise<void>;
+  quarantineCorrupt?(corruptBytes?: Uint8Array | null): Promise<{
+    quarantinedPath?: string | null;
+    backupBytes: Uint8Array | null;
+  }>;
   getLocationLabel(): Promise<string>;
   revealFolder(): Promise<void>;
   exportText(defaultName: string, content: string): Promise<boolean>;
@@ -107,15 +125,22 @@ export function createStorageBackend(): StorageBackend {
       async loadBytes() {
         const res = await desktop.loadDbBytes();
         if (res.ok && res.bytes) {
-          return new Uint8Array(res.bytes);
+          return toUint8Array(res.bytes);
         }
         return null;
       },
       async saveBytes(bytes) {
-        const res = await desktop.saveDbBytes(Array.from(bytes));
+        const res = await desktop.saveDbBytes(bytes);
         if (!res.ok) {
           throw new Error(res.error || 'Falha ao salvar banco SQLite em disco.');
         }
+      },
+      async quarantineCorrupt() {
+        const res = await desktop.quarantineDb();
+        return {
+          quarantinedPath: res.quarantinedPath ?? null,
+          backupBytes: toUint8Array(res.backupBytes),
+        };
       },
       async getLocationLabel() {
         const loc = await desktop.getDbLocation();
@@ -126,13 +151,15 @@ export function createStorageBackend(): StorageBackend {
       },
       async exportText(defaultName, content) {
         const res = await desktop.exportTextFile({ defaultName, content });
+        if (res.error) throw new Error(res.error);
         return !res.canceled;
       },
       async exportBinary(defaultName, bytes) {
         const res = await desktop.exportSqliteFile({
           defaultName,
-          bytesArray: Array.from(bytes),
+          bytesArray: bytes,
         });
+        if (res.error) throw new Error(res.error);
         return !res.canceled;
       },
     };
@@ -145,6 +172,15 @@ export function createStorageBackend(): StorageBackend {
     },
     async saveBytes(bytes) {
       await idbSet(bytes);
+    },
+    async quarantineCorrupt(corruptBytes) {
+      if (corruptBytes) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const key = `corrupt_sqlite_${stamp}`;
+        await idbSetKey(key, corruptBytes);
+        return { quarantinedPath: `IndexedDB:${key}`, backupBytes: null };
+      }
+      return { quarantinedPath: null, backupBytes: null };
     },
     async getLocationLabel() {
       return 'IndexedDB local (navegador)';
@@ -172,6 +208,7 @@ export function createStorageBackend(): StorageBackend {
 export class MemoryStorageBackend implements StorageBackend {
   isDesktop = false;
   private bytes: Uint8Array | null = null;
+  public quarantinedCount = 0;
 
   async loadBytes(): Promise<Uint8Array | null> {
     return this.bytes ? new Uint8Array(this.bytes) : null;
@@ -179,6 +216,14 @@ export class MemoryStorageBackend implements StorageBackend {
 
   async saveBytes(bytes: Uint8Array): Promise<void> {
     this.bytes = new Uint8Array(bytes);
+  }
+
+  async quarantineCorrupt(): Promise<{
+    quarantinedPath?: string | null;
+    backupBytes: Uint8Array | null;
+  }> {
+    this.quarantinedCount++;
+    return { quarantinedPath: `memory:corrupt-${this.quarantinedCount}`, backupBytes: null };
   }
 
   async getLocationLabel(): Promise<string> {

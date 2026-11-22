@@ -75,8 +75,8 @@ interface AppContextValue {
   activeDiscipline: Discipline | null;
   cycleSettings: CycleSettings;
   cycleState: CycleState;
+  totalCompletedCycles: number;
   activeSession: ActiveSession | null;
-  elapsedSessionMs: number;
   allSessions: SessionRecord[];
   sessions: SessionRecord[];
   allErrors: ErrorRecord[];
@@ -187,6 +187,8 @@ interface AppContextValue {
 
   // Cartas Colecionáveis & Conquistas
   evaluatedCards: EvaluatedCard[];
+  cardsEnabled: boolean;
+  setCardsEnabled: (enabled: boolean) => void;
 
   // Configurações & Backup
   updateUserName: (name: string) => Promise<void>;
@@ -196,11 +198,17 @@ interface AppContextValue {
     rawJson: string,
     mode: 'replace' | 'merge',
   ) => Promise<Result<{ importedDisciplines: number; importedErrors: number; importedSessions: number }>>;
+  restoreBackupSqlite: (bytes: Uint8Array) => Promise<Result<void>>;
   revealDataFolder: () => Promise<void>;
   resetAllData: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
+const TimerContext = createContext<number>(0);
+
+export function useSessionTimer(): number {
+  return useContext(TimerContext);
+}
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -237,6 +245,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     completedCycles: 0,
   });
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
+  const activeSessionRef = useRef<ActiveSession | null>(null);
+  activeSessionRef.current = activeSession;
+  const notesSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [elapsedSessionMs, setElapsedSessionMs] = useState(0);
   const [allSessions, setAllSessions] = useState<SessionRecord[]>([]);
   const [allErrors, setAllErrors] = useState<ErrorRecord[]>([]);
@@ -249,6 +260,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const [dbLocationLabel, setDbLocationLabel] = useState('');
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [unlockedCardsMap, setUnlockedCardsMap] = useState<Record<string, string>>({});
+  const [cardsEnabled, setCardsEnabledState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('total_controle_cards_enabled') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  const setCardsEnabled = useCallback((enabled: boolean) => {
+    setCardsEnabledState(enabled);
+    try {
+      localStorage.setItem('total_controle_cards_enabled', String(enabled));
+    } catch {
+      // Ignore storage errors in restricted environments
+    }
+    if (!enabled) {
+      setActiveTab((prev) => (prev === 'cards' ? 'dashboard' : prev));
+    }
+  }, []);
   const cardsInitializedRef = useRef(false);
 
   const [selectedContentForDrawer, setSelectedContentForDrawer] = useState<{
@@ -323,6 +353,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         setSyncSummary(loaded.syncSummary);
         setUnlockedCardsMap(repo.getUnlockedCardsMap());
         setDbLocationLabel(await backend.getLocationLabel());
+        if (repo.recoveryNotice) {
+          notify(repo.recoveryNotice, 'warning');
+        }
         if (loaded.sessionRestore?.recovered) {
           notify(
             'Sessão em andamento foi pausada automaticamente após o encerramento do aplicativo.',
@@ -344,32 +377,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [notify]);
 
-  // Tick visual do cronômetro a cada 500ms
+  // Tick visual do cronômetro a cada 500ms (isolado em TimerContext para não re-renderizar o app todo)
+  const activeSessionId = activeSession?.id ?? null;
+  const activeSessionStatus = activeSession?.status ?? null;
+
   useEffect(() => {
-    if (!activeSession) {
+    const sess = activeSessionRef.current;
+    if (!sess) {
       setElapsedSessionMs(0);
       return;
     }
-    setElapsedSessionMs(elapsedMs(activeSession, Date.now()));
-    if (activeSession.status !== 'running') return;
+    setElapsedSessionMs(elapsedMs(sess, Date.now()));
+    if (sess.status !== 'running') return;
     const interval = setInterval(() => {
-      setElapsedSessionMs(elapsedMs(activeSession, Date.now()));
+      const current = activeSessionRef.current;
+      if (current) {
+        setElapsedSessionMs(elapsedMs(current, Date.now()));
+      }
     }, 500);
     return () => clearInterval(interval);
-  }, [activeSession]);
+  }, [activeSessionId, activeSessionStatus]);
 
-  // Heartbeat a cada 15s para recuperação em caso de queda
+  // Heartbeat a cada 15s para recuperação em caso de queda (sem recriar intervalos nem re-renderizar)
   useEffect(() => {
-    if (!activeSession || activeSession.status !== 'running') return;
+    if (!activeSessionId || activeSessionStatus !== 'running') return;
     const interval = setInterval(() => {
       const repo = repoRef.current;
-      if (!repo) return;
-      const beaten = heartbeat(activeSession, Date.now());
-      setActiveSession(beaten);
-      void repo.saveActiveSession(beaten);
+      const current = activeSessionRef.current;
+      if (!repo || !current || current.status !== 'running') return;
+      const beaten = heartbeat(current, Date.now());
+      activeSessionRef.current = beaten;
+      void repo.saveActiveSession(beaten).catch(() => {
+        notify('Não foi possível gravar o progresso da sessão em disco.', 'error');
+      });
     }, HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [activeSession]);
+  }, [activeSessionId, activeSessionStatus, notify]);
+
+  useEffect(() => {
+    return () => {
+      if (notesSaveTimerRef.current) {
+        clearTimeout(notesSaveTimerRef.current);
+      }
+    };
+  }, []);
 
   const activeExam = useMemo(() => {
     if (exams.length === 0) return null;
@@ -480,6 +531,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       const target = exams.find((e) => e.id === examId);
       if (!target) return { ok: false, error: 'Concurso não encontrado.' };
+      if (
+        activeSession &&
+        allDisciplines.some(
+          (d) => d.id === activeSession.disciplineId && d.examId === examId,
+        )
+      ) {
+        await repoRef.current?.saveActiveSession(null);
+      }
       await repoRef.current?.deleteExam(examId, target.name);
       if (meta.activeExamId === examId) {
         const nextExam = exams.find((e) => e.id !== examId);
@@ -490,7 +549,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       notify(`Concurso "${target.name}" removido.`, 'info');
       return { ok: true, value: undefined };
     },
-    [exams, meta.activeExamId, notify, syncFromRepo],
+    [activeSession, allDisciplines, exams, meta.activeExamId, notify, syncFromRepo],
   );
 
   const clearErrorPrefill = useCallback(() => setErrorPrefill(null), []);
@@ -625,11 +684,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     async (disciplineId: string) => {
       const target = disciplines.find((d) => d.id === disciplineId);
       if (!target) return;
+      if (activeSession?.disciplineId === disciplineId) {
+        await repoRef.current?.saveActiveSession(null);
+      }
       await repoRef.current?.deleteDiscipline(disciplineId, target.name);
       syncFromRepo();
       notify(`Disciplina "${target.name}" removida.`, 'info');
     },
-    [disciplines, notify, syncFromRepo],
+    [activeSession?.disciplineId, disciplines, notify, syncFromRepo],
   );
 
   const updateContentNode = useCallback(
@@ -871,25 +933,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       const matchingBlock = cycleState.plan?.blocks.find(
         (b) => b.disciplineId === disciplineId,
       );
-      const block: CycleBlock = matchingBlock ?? {
-        index: cycleState.position,
-        disciplineId: disc.id,
-        disciplineName: disc.name,
-        theme: disc.theme,
-        plannedMinutes: disc.sessionMinutesOverride ?? cycleSettings.sessionMinutes,
-        occurrence: 1,
-        totalForDiscipline: 1,
-      };
-      await startBlockSession(block, contentId, contentTitle);
+      if (!matchingBlock) {
+        notify(
+          'Esta disciplina não está incluída no ciclo de estudos. Iniciando sessão pela Trilha.',
+          'info',
+        );
+        await startTrailSessionForContent(disciplineId, contentId);
+        setActiveTab('trails');
+        return;
+      }
+      await startBlockSession(matchingBlock, contentId, contentTitle);
     },
     [
       activeSession,
-      cycleSettings.sessionMinutes,
       cycleState.plan,
-      cycleState.position,
       disciplines,
       notify,
       startBlockSession,
+      startTrailSessionForContent,
     ],
   );
 
@@ -909,15 +970,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const setActiveSessionNotes = useCallback(
     async (notes: string) => {
-      if (!activeSession) return;
-      const next = { ...activeSession, notes };
+      const current = activeSessionRef.current;
+      if (!current) return;
+      const next = { ...current, notes };
+      activeSessionRef.current = next;
       setActiveSession(next);
-      await repoRef.current?.saveActiveSession(next);
+      if (notesSaveTimerRef.current) {
+        clearTimeout(notesSaveTimerRef.current);
+      }
+      notesSaveTimerRef.current = setTimeout(() => {
+        const latest = activeSessionRef.current;
+        if (latest) {
+          void repoRef.current?.saveActiveSession(latest).catch(() => {
+            notify('Falha ao salvar anotações da sessão em disco.', 'error');
+          });
+        }
+      }, 500);
     },
-    [activeSession],
+    [notify],
   );
 
   const discardActiveSession = useCallback(async () => {
+    if (notesSaveTimerRef.current) {
+      clearTimeout(notesSaveTimerRef.current);
+      notesSaveTimerRef.current = null;
+    }
     const isTrail = activeSession?.origin === 'trilha';
     await repoRef.current?.saveActiveSession(null);
     syncFromRepo();
@@ -931,51 +1008,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const finishActiveSession = useCallback(
     async (overrideMinutes?: number) => {
-      if (!activeSession) return;
-      const origin = activeSession.origin === 'trilha' ? 'trilha' : 'ciclo';
+      const session = activeSessionRef.current;
+      if (!session) return;
+      if (notesSaveTimerRef.current) {
+        clearTimeout(notesSaveTimerRef.current);
+        notesSaveTimerRef.current = null;
+      }
+      const origin = session.origin === 'trilha' ? 'trilha' : 'ciclo';
       const nowMs = Date.now();
       const nowIso = new Date(nowMs).toISOString();
-      const rawMinutes = Math.round(elapsedMs(activeSession, nowMs) / 60_000);
+      const rawMinutes = Math.round(elapsedMs(session, nowMs) / 60_000);
       const studiedMinutes =
-        overrideMinutes !== undefined
-          ? Math.max(0, Math.round(overrideMinutes))
+        overrideMinutes !== undefined && Number.isFinite(overrideMinutes)
+          ? Math.max(0, Math.min(1440, Math.round(overrideMinutes)))
           : Math.max(1, rawMinutes);
 
-      const disc = allDisciplines.find((d) => d.id === activeSession.disciplineId);
+      const disc = allDisciplines.find((d) => d.id === session.disciplineId);
       const status: SessionStatus =
         studiedMinutes <= 0
           ? 'skipped'
-          : studiedMinutes >= activeSession.plannedMinutes * 0.8
+          : studiedMinutes >= session.plannedMinutes * 0.8
             ? 'completed'
             : 'partial';
 
       const record: SessionRecord = {
-        id: activeSession.id,
+        id: session.id,
         origin,
-        disciplineId: activeSession.disciplineId,
-        disciplineName: activeSession.disciplineName,
+        disciplineId: session.disciplineId,
+        disciplineName: session.disciplineName,
         disciplineTheme: disc?.theme ?? 'sky',
-        contentId: activeSession.contentId,
-        contentTitle: activeSession.contentTitle,
-        cycleNumber: activeSession.cycleNumber,
-        blockIndex: activeSession.blockIndex,
-        startedAt: activeSession.startedAt,
+        contentId: session.contentId,
+        contentTitle: session.contentTitle,
+        cycleNumber: session.cycleNumber,
+        blockIndex: session.blockIndex,
+        startedAt: session.startedAt,
         endedAt: nowIso,
-        plannedMinutes: activeSession.plannedMinutes,
+        plannedMinutes: session.plannedMinutes,
         studiedMinutes,
         status,
-        notes: activeSession.notes,
+        notes: session.notes,
         createdAt: nowIso,
         updatedAt: nowIso,
         syncStatus: 'pending',
       };
 
       let linkedContent: ContentNode | null = null;
-      if (disc && activeSession.contentId) {
+      if (disc && session.contentId) {
         for (const l of disc.levels) {
           for (const m of l.modules) {
             const found = m.contents.find(
-              (c) => c.id === activeSession.contentId,
+              (c) => c.id === session.contentId,
             );
             if (found) linkedContent = found;
           }
@@ -986,8 +1068,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       const targetCycleState =
         (targetExamId ? examCycles[targetExamId]?.cycleState : undefined) ??
         cycleState;
-      const nextCycleState =
-        origin === 'ciclo' ? advanceCycleState(targetCycleState) : null;
+      const shouldAdvanceCycle =
+        origin === 'ciclo' && session.blockIndex === targetCycleState.position;
+      const nextCycleState = shouldAdvanceCycle
+        ? advanceCycleState(targetCycleState)
+        : null;
       await repoRef.current?.finishStudySession({
         record,
         nextCycleState,
@@ -999,7 +1084,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     },
     [
       activeExam?.id,
-      activeSession,
       advanceCycleState,
       allDisciplines,
       cycleState,
@@ -1117,14 +1201,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     const repo = repoRef.current;
     const backend = backendRef.current;
     if (!repo || !backend) return;
-    const payload = repo.createBackupPayload();
-    const dateStamp = new Date().toISOString().slice(0, 10);
-    const saved = await backend.exportText(
-      `totalcontrole-backup-${dateStamp}.json`,
-      JSON.stringify(payload, null, 2),
-    );
-    if (saved) notify('Backup JSON exportado com sucesso.', 'success');
+    try {
+      const payload = repo.createBackupPayload();
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const saved = await backend.exportText(
+        `totalcontrole-backup-${dateStamp}.json`,
+        JSON.stringify(payload, null, 2),
+      );
+      if (saved) notify('Backup JSON exportado com sucesso.', 'success');
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : 'Erro ao exportar backup JSON.',
+        'error',
+      );
+    }
   }, [notify]);
+
+  const totalCompletedCycles = useMemo(() => {
+    const sum = Object.values(examCycles).reduce(
+      (acc, item) => acc + (item.cycleState.completedCycles ?? 0),
+      0,
+    );
+    return Math.max(sum, cycleState.completedCycles);
+  }, [examCycles, cycleState.completedCycles]);
 
   const evaluatedCards = useMemo(
     () =>
@@ -1134,7 +1233,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
           disciplines: allDisciplines,
           sessions: allSessions,
           errors: allErrors,
-          cycleState,
+          cycleState: {
+            ...cycleState,
+            completedCycles: totalCompletedCycles,
+          },
           operationLogs: allOperationLogs,
         },
         unlockedCardsMap,
@@ -1145,6 +1247,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       allSessions,
       allErrors,
       cycleState,
+      totalCompletedCycles,
       allOperationLogs,
       unlockedCardsMap,
     ],
@@ -1176,13 +1279,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     const repo = repoRef.current;
     const backend = backendRef.current;
     if (!repo || !backend) return;
-    const bytes = repo.exportSqliteBytes();
-    const dateStamp = new Date().toISOString().slice(0, 10);
-    const saved = await backend.exportBinary(
-      `totalcontrole-db-${dateStamp}.sqlite`,
-      bytes,
-    );
-    if (saved) notify('Banco SQLite exportado com sucesso.', 'success');
+    try {
+      const bytes = repo.exportSqliteBytes();
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const saved = await backend.exportBinary(
+        `totalcontrole-db-${dateStamp}.sqlite`,
+        bytes,
+      );
+      if (saved) notify('Banco SQLite exportado com sucesso.', 'success');
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : 'Erro ao exportar banco SQLite.',
+        'error',
+      );
+    }
   }, [notify]);
 
   const restoreBackupJson = useCallback(
@@ -1190,7 +1300,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       const res = await repoRef.current!.restoreFromBackup(rawJson, mode);
       if (res.ok) {
         syncFromRepo();
-        notify('Backup restaurado com sucesso.', 'success');
+        notify(
+          `Backup restaurado: ${res.value.importedDisciplines} disciplina(s), ${res.value.importedSessions} sessão(ões), ${res.value.importedErrors} erro(s).`,
+          'success',
+        );
+      }
+      return res;
+    },
+    [notify, syncFromRepo],
+  );
+
+  const restoreBackupSqlite = useCallback(
+    async (bytes: Uint8Array) => {
+      const res = await repoRef.current!.restoreFromSqliteBytes(bytes);
+      if (res.ok) {
+        syncFromRepo();
+        notify('Banco SQLite restaurado com sucesso.', 'success');
       }
       return res;
     },
@@ -1220,8 +1345,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     activeDiscipline,
     cycleSettings,
     cycleState,
+    totalCompletedCycles,
     activeSession,
-    elapsedSessionMs,
     allSessions,
     sessions,
     allErrors,
@@ -1272,15 +1397,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     submitErrorReview,
     deleteError,
     evaluatedCards,
+    cardsEnabled,
+    setCardsEnabled,
     updateUserName,
     exportJsonBackup,
     exportSqliteBackup,
     restoreBackupJson,
+    restoreBackupSqlite,
     revealDataFolder,
     resetAllData,
   };
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  return (
+    <AppContext.Provider value={value}>
+      <TimerContext.Provider value={elapsedSessionMs}>
+        {children}
+      </TimerContext.Provider>
+    </AppContext.Provider>
+  );
 };
 
 export function useApp(): AppContextValue {

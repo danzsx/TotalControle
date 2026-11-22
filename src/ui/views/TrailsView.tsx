@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -11,13 +11,14 @@ import {
   RotateCcw,
   Trash2,
 } from 'lucide-react';
-import { useApp } from '../../application/AppContext';
+import { useApp, useSessionTimer } from '../../application/AppContext';
 import { DISCIPLINE_THEMES } from '../../domain/constants';
 import {
   calculateContentMetrics,
   calculateDisciplineMetrics,
 } from '../../domain/mastery';
 import { TRAIL_TEMPLATES } from '../../domain/prebuiltTrails';
+import { normalizeText } from '../../domain/text';
 import type {
   ContentStatus,
   Difficulty,
@@ -48,7 +49,6 @@ export const TrailsView: React.FC = () => {
     sessions,
     errors,
     activeSession,
-    elapsedSessionMs,
     selectActiveDiscipline,
     addDisciplineFromTemplate,
     addDisciplinesFromTemplates,
@@ -64,11 +64,45 @@ export const TrailsView: React.FC = () => {
     discardActiveSession,
     notify,
   } = useApp();
+  const elapsedSessionMs = useSessionTimer();
 
   const [statusFilter, setStatusFilter] = useState<ContentStatus | 'todos'>('todos');
   const [showCatalogModal, setShowCatalogModal] = useState(false);
   const [confirmDeleteDiscId, setConfirmDeleteDiscId] = useState<string | null>(null);
+  const [confirmDiscardSession, setConfirmDiscardSession] = useState(false);
   const [showMoveModal, setShowMoveModal] = useState(false);
+
+  useEffect(() => {
+    if (!showCatalogModal && !showMoveModal) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowCatalogModal(false);
+        setShowMoveModal(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showCatalogModal, showMoveModal]);
+
+  const existingTemplateIds = useMemo(
+    () =>
+      new Set(
+        disciplines
+          .map((d) => d.templateId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    [disciplines],
+  );
+  const existingDiscNames = useMemo(
+    () => new Set(disciplines.map((d) => normalizeText(d.name))),
+    [disciplines],
+  );
+  const isTemplateAdded = (tpl: (typeof TRAIL_TEMPLATES)[number]) =>
+    existingTemplateIds.has(tpl.id) || existingDiscNames.has(normalizeText(tpl.name));
+  const missingTemplates = useMemo(
+    () => TRAIL_TEMPLATES.filter((tpl) => !isTemplateAdded(tpl)),
+    [existingTemplateIds, existingDiscNames],
+  );
   const [targetExamId, setTargetExamId] = useState<string>('');
   const [includeInCycle, setIncludeInCycle] = useState(false);
 
@@ -201,7 +235,7 @@ export const TrailsView: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={discardActiveSession}
+              onClick={() => setConfirmDiscardSession(true)}
               className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs text-[#DC2626] hover:bg-white/70 transition cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -514,7 +548,15 @@ export const TrailsView: React.FC = () => {
 
       {/* Modal de catálogo / nova disciplina */}
       {showCatalogModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/30 backdrop-blur-xs p-4">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/30 backdrop-blur-xs p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Adicionar Disciplina e Trilha"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowCatalogModal(false);
+          }}
+        >
           <div className="w-full max-w-3xl max-h-[88vh] overflow-y-auto rounded-[28px] bg-white border border-[#EAE9E4] p-6 shadow-[0_24px_60px_rgba(17,24,39,0.14)] space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="font-display text-xl font-bold text-[#111827]">
@@ -550,37 +592,55 @@ export const TrailsView: React.FC = () => {
                 </h4>
                 <button
                   type="button"
+                  disabled={missingTemplates.length === 0}
                   onClick={async () => {
-                    await addDisciplinesFromTemplates(TRAIL_TEMPLATES, {
+                    if (missingTemplates.length === 0) return;
+                    await addDisciplinesFromTemplates(missingTemplates, {
                       inCycle: includeInCycle,
                     });
                     setShowCatalogModal(false);
                   }}
-                  className="px-3 py-1.5 rounded-xl bg-[#1D4ED8] hover:bg-[#1E40AF] text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+                  className="px-3 py-1.5 rounded-xl bg-[#1D4ED8] hover:bg-[#1E40AF] disabled:opacity-45 disabled:cursor-not-allowed text-white text-xs font-semibold shadow-sm transition cursor-pointer"
                 >
-                  Adicionar todas do edital ({TRAIL_TEMPLATES.length})
+                  {missingTemplates.length === 0
+                    ? 'Todas já adicionadas'
+                    : `Adicionar restantes (${missingTemplates.length})`}
                 </button>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {TRAIL_TEMPLATES.map((tpl) => {
                   const theme = DISCIPLINE_THEMES[tpl.theme];
+                  const added = isTemplateAdded(tpl);
                   return (
                     <button
                       key={tpl.id}
                       type="button"
+                      disabled={added}
                       onClick={async () => {
+                        if (added) return;
                         await addDisciplineFromTemplate(tpl, {
                           inCycle: includeInCycle,
                         });
                         setShowCatalogModal(false);
                       }}
-                      className="text-left p-4 rounded-2xl surface-inset hover:bg-white hover:border-[#D1D5DB] hover:shadow-[0_4px_16px_rgba(17,24,39,0.04)] transition cursor-pointer"
+                      className={`text-left p-4 rounded-2xl surface-inset transition ${
+                        added
+                          ? 'opacity-60 cursor-not-allowed'
+                          : 'hover:bg-white hover:border-[#D1D5DB] hover:shadow-[0_4px_16px_rgba(17,24,39,0.04)] cursor-pointer'
+                      }`}
                     >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`w-2.5 h-2.5 rounded-full ${theme.dot}`} />
-                        <span className="font-semibold text-sm text-[#111827]">
-                          {tpl.name}
-                        </span>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${theme.dot}`} />
+                          <span className="font-semibold text-sm text-[#111827] truncate">
+                            {tpl.name}
+                          </span>
+                        </div>
+                        {added && (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#ECFDF5] text-[#047857] shrink-0">
+                            Adicionada
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-[#6B7280] line-clamp-2">
                         {tpl.description}
@@ -672,7 +732,15 @@ export const TrailsView: React.FC = () => {
 
       {/* Modal de Mover Disciplina de Concurso */}
       {showMoveModal && activeDiscipline && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/30 backdrop-blur-xs p-4">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/30 backdrop-blur-xs p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Mudar de Concurso"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowMoveModal(false);
+          }}
+        >
           <div className="w-full max-w-md rounded-[28px] bg-white border border-[#EAE9E4] p-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-xl bg-[#EFF6FF] text-[#1D4ED8] flex items-center justify-center">
@@ -747,6 +815,19 @@ export const TrailsView: React.FC = () => {
             await deleteDiscipline(confirmDeleteDiscId);
           }
           setConfirmDeleteDiscId(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmDiscardSession}
+        title="Descartar sessão em andamento?"
+        message="O tempo acumulado desta sessão pela Trilha será descartado e não será salvo no histórico."
+        confirmLabel="Descartar"
+        danger
+        onCancel={() => setConfirmDiscardSession(false)}
+        onConfirm={async () => {
+          setConfirmDiscardSession(false);
+          await discardActiveSession();
         }}
       />
     </div>
